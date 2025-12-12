@@ -1,5 +1,7 @@
 # Quickstart: Static Container Tools
 
+> **Note**: Replace `pigfoot/rootless-static-toolkits` with your actual GitHub repository (e.g., `pigfoot/rootless-static-toolkits`)
+
 ## For Users
 
 ### Download and Install
@@ -8,13 +10,14 @@
 
    ```bash
    # Example: Download podman-full for amd64
-   curl -LO https://github.com/YOUR_ORG/rootless-static-toolkits/releases/latest/download/podman-full-linux-amd64.tar.zst
+   REPO="pigfoot/rootless-static-toolkits"  # e.g., "pigfoot/rootless-static-toolkits"
+   curl -LO "https://github.com/${REPO}/releases/latest/download/podman-full-linux-amd64.tar.zst"
    ```
 
 2. **Verify the checksum:**
 
    ```bash
-   curl -LO https://github.com/YOUR_ORG/rootless-static-toolkits/releases/latest/download/checksums.txt
+   curl -LO "https://github.com/${REPO}/releases/latest/download/checksums.txt"
    sha256sum -c checksums.txt --ignore-missing
    ```
 
@@ -22,7 +25,7 @@
 
    ```bash
    cosign verify-blob \
-     --certificate-identity-regexp='https://github.com/YOUR_ORG/.*' \
+     --certificate-identity-regexp="https://github.com/${REPO}/.*" \
      --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
      --signature podman-full-linux-amd64.tar.zst.sig \
      podman-full-linux-amd64.tar.zst
@@ -74,7 +77,8 @@ skopeo copy docker://alpine:latest dir:./alpine-image
 ### Clone and Setup
 
 ```bash
-git clone https://github.com/YOUR_ORG/rootless-static-toolkits.git
+REPO="pigfoot/rootless-static-toolkits"  # e.g., "pigfoot/rootless-static-toolkits"
+git clone "https://github.com/${REPO}.git"
 cd rootless-static-toolkits
 ```
 
@@ -163,8 +167,8 @@ cosign version
 
 ## Links
 
-- [Releases](https://github.com/YOUR_ORG/rootless-static-toolkits/releases)
-- [Source Code](https://github.com/YOUR_ORG/rootless-static-toolkits)
+- [Releases](https://github.com/pigfoot/rootless-static-toolkits/releases) - Replace `pigfoot/rootless-static-toolkits` with your repository
+- [Source Code](https://github.com/pigfoot/rootless-static-toolkits)
 - [Upstream Podman](https://github.com/containers/podman)
 - [Upstream Buildah](https://github.com/containers/buildah)
 - [Upstream Skopeo](https://github.com/containers/skopeo)

@@ -67,8 +67,8 @@ mkdir -p "$STAGING_DIR/$PACKAGE_DIR/lib/$TOOL"
 # Copy etc/ directory with default configs
 echo "Copying configuration files..."
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR/etc/containers"
-cp "$PROJECT_ROOT/build/etc/containers/policy.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
-cp "$PROJECT_ROOT/build/etc/containers/registries.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+cp "$PROJECT_ROOT/etc/containers/policy.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+cp "$PROJECT_ROOT/etc/containers/registries.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
 
 # Create README for the package
 cat > "$STAGING_DIR/$PACKAGE_DIR/README.txt" <<EOF

@@ -58,6 +58,22 @@ if ! command -v gh &> /dev/null; then
   exit 1
 fi
 
+# Check GitHub API rate limit
+echo "Checking GitHub API rate limit..."
+RATE_LIMIT=$(gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "unknown")
+if [[ "$RATE_LIMIT" != "unknown" && "$RATE_LIMIT" -lt 10 ]]; then
+  RESET_TIME=$(gh api rate_limit --jq '.rate.reset' 2>/dev/null || echo "unknown")
+  if [[ "$RESET_TIME" != "unknown" ]]; then
+    RESET_DATE=$(date -d "@$RESET_TIME" 2>/dev/null || date -r "$RESET_TIME" 2>/dev/null || echo "unknown")
+    echo "Warning: GitHub API rate limit low ($RATE_LIMIT remaining)" >&2
+    echo "Rate limit resets at: $RESET_DATE" >&2
+  fi
+  if [[ "$RATE_LIMIT" -eq 0 ]]; then
+    echo "Error: GitHub API rate limit exceeded" >&2
+    exit 1
+  fi
+fi
+
 # Get latest upstream version (excluding pre-releases)
 echo "Fetching latest upstream version..."
 UPSTREAM_VERSION=$(gh release list \
@@ -65,9 +81,18 @@ UPSTREAM_VERSION=$(gh release list \
   --limit 50 \
   --exclude-drafts \
   --exclude-pre-releases \
-  | grep -v -E '(alpha|beta|rc|RC)' \
+  2>&1 | tee /tmp/gh_output.txt \
+  | grep -v -E '(alpha|beta|rc|RC|HTTP)' \
   | head -1 \
   | awk '{print $1}')
+
+# Check if rate limited
+if grep -qi "rate limit" /tmp/gh_output.txt 2>/dev/null; then
+  echo "Error: GitHub API rate limit exceeded while fetching releases" >&2
+  rm -f /tmp/gh_output.txt
+  exit 1
+fi
+rm -f /tmp/gh_output.txt
 
 if [[ -z "$UPSTREAM_VERSION" ]]; then
   echo "Error: Could not fetch upstream version" >&2

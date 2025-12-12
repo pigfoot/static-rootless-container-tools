@@ -137,18 +137,18 @@ Dockerfile.*             # Fallback build containers
 
 ### Version Check Workflow
 
-- [ ] T039 [US3] Create check-releases workflow with daily cron at .github/workflows/check-releases.yml
-- [ ] T040 [US3] Add podman version check job to check-releases.yml (calls scripts/check-version.sh)
-- [ ] T041 [P] [US3] Add buildah version check job to check-releases.yml
-- [ ] T042 [P] [US3] Add skopeo version check job to check-releases.yml
+- [X] T039 [US3] Create check-releases workflow with daily cron at .github/workflows/check-releases.yml
+- [X] T040 [US3] Add podman version check job to check-releases.yml (calls scripts/check-version.sh)
+- [X] T041 [P] [US3] Add buildah version check job to check-releases.yml
+- [X] T042 [P] [US3] Add skopeo version check job to check-releases.yml
 
 ### Trigger Logic
 
-- [ ] T043 [US3] Add workflow_call trigger to build-podman.yml for automated triggering
-- [ ] T044 [P] [US3] Add workflow_call trigger to build-buildah.yml
-- [ ] T045 [P] [US3] Add workflow_call trigger to build-skopeo.yml
-- [ ] T046 [US3] Add pre-release filtering (skip alpha/beta/rc) to scripts/check-version.sh
-- [ ] T047 [US3] Add duplicate release check (skip if release exists) to scripts/check-version.sh
+- [X] T043 [US3] Add workflow_call trigger to build-podman.yml for automated triggering
+- [X] T044 [P] [US3] Add workflow_call trigger to build-buildah.yml
+- [X] T045 [P] [US3] Add workflow_call trigger to build-skopeo.yml
+- [X] T046 [US3] Add pre-release filtering (skip alpha/beta/rc) to scripts/check-version.sh
+- [X] T047 [US3] Add duplicate release check (skip if release exists) to scripts/check-version.sh
 
 **Checkpoint**: At this point, User Story 3 should work - daily cron detects and triggers builds automatically
 
@@ -162,10 +162,10 @@ Dockerfile.*             # Fallback build containers
 
 ### Manual Trigger Implementation
 
-- [ ] T048 [US4] Add workflow_dispatch trigger with version input to .github/workflows/build-podman.yml
-- [ ] T049 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-buildah.yml
-- [ ] T050 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-skopeo.yml
-- [ ] T051 [US4] Add release update logic (replace existing assets on rebuild) to build workflows
+- [X] T048 [US4] Add workflow_dispatch trigger with version input to .github/workflows/build-podman.yml
+- [X] T049 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-buildah.yml
+- [X] T050 [P] [US4] Add workflow_dispatch trigger to .github/workflows/build-skopeo.yml
+- [X] T051 [US4] Add release update logic (replace existing assets on rebuild) to build workflows
 
 **Checkpoint**: At this point, User Story 4 should work - manual triggers with version selection work
 
@@ -175,12 +175,12 @@ Dockerfile.*             # Fallback build containers
 
 **Purpose**: Improvements that affect multiple user stories
 
-- [ ] T052 [P] Add error handling for GitHub API rate limits to scripts/check-version.sh
-- [ ] T053 [P] Add retry logic with exponential backoff to build scripts
-- [ ] T054 [P] Add build failure handling (fail entire release if any arch fails) to workflows
-- [ ] T055 Update quickstart.md with actual repository URLs after initial setup
-- [ ] T056 [P] Add CONTRIBUTING.md with development workflow at ./CONTRIBUTING.md
-- [ ] T057 Run full end-to-end validation per quickstart.md
+- [X] T052 [P] Add error handling for GitHub API rate limits to scripts/check-version.sh
+- [X] T053 [P] Add retry logic with exponential backoff to build scripts
+- [X] T054 [P] Add build failure handling (fail entire release if any arch fails) to workflows
+- [X] T055 Update quickstart.md with actual repository URLs after initial setup
+- [X] T056 [P] Add CONTRIBUTING.md with development workflow at ./CONTRIBUTING.md
+- [ ] T057 Run full end-to-end validation per quickstart.md (requires GitHub repository setup)
 
 ---
 

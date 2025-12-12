@@ -47,7 +47,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.21'
+          go-version: '1'
 
       - name: Install build dependencies
         run: |
@@ -79,7 +79,7 @@ jobs:
           ./scripts/test-static.sh build/skopeo-$ARCH/install
 
       - name: Setup cosign
-        uses: sigstore/cosign-installer@v4
+        uses: sigstore/cosign-installer@v3.10.1
 
       - name: Sign tarball
         env:
@@ -130,7 +130,29 @@ jobs:
         run: |
           TAG="skopeo-${VERSION}"
 
-          # Create release (or add to existing)
+          # Create release notes file to avoid YAML escaping issues
+          cat > /tmp/release-notes.md <<'NOTES'
+          Static binaries for skopeo built with Zig + musl + mimalloc
+
+          **ARCHITECTURES**
+            - linux/amd64
+            - linux/arm64
+
+          **INSTALLATION**
+          Download and extract the tarball for your architecture.
+          See the example commands in the release assets section.
+
+          **VERIFICATION**
+          All tarballs include checksums.txt and .sig signature files.
+          Use cosign to verify signatures (keyless OIDC signing).
+
+          **BUILD DETAILS**
+            - Built with Zig 0.11.0 cross-compiler + musl libc + mimalloc allocator
+            - Workflow ${{ github.workflow }}
+            - Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          NOTES
+
+          # Create or update release
           if gh release view "$TAG" &>/dev/null; then
             echo "Release $TAG already exists, uploading additional assets..."
             gh release upload "$TAG" release/* --clobber
@@ -138,36 +160,7 @@ jobs:
             echo "Creating new release $TAG..."
             gh release create "$TAG" \
               --title "Skopeo ${VERSION}" \
-              --notes "Static binaries for skopeo ${VERSION}
-
-**Architectures**: linux/amd64, linux/arm64
-
-**Installation**:
-\`\`\`bash
-wget https://github.com/${{ github.repository }}/releases/download/${TAG}/skopeo-linux-amd64.tar.zst
-tar -xf skopeo-linux-amd64.tar.zst
-cd skopeo-${VERSION}/bin
-./skopeo --version
-\`\`\`
-
-**Verification**:
-\`\`\`bash
-# Verify checksum
-wget https://github.com/${{ github.repository }}/releases/download/${TAG}/checksums.txt
-sha256sum -c checksums.txt --ignore-missing
-
-# Verify signature
-cosign verify-blob \\
-  --signature skopeo-linux-amd64.tar.zst.sig \\
-  --certificate-identity-regexp 'https://github.com/${{ github.repository }}' \\
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
-  skopeo-linux-amd64.tar.zst
-\`\`\`
-
-**Build Details**:
-- Built with: Zig cross-compiler + musl + mimalloc
-- Workflow: ${{ github.workflow }}
-- Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+              --notes-file /tmp/release-notes.md \
               release/*
           fi
 

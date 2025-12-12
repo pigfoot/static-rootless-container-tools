@@ -1,0 +1,144 @@
+name: Check New Releases
+
+on:
+  # Daily check at 2 AM UTC
+  schedule:
+    - cron: '0 2 * * *'
+
+  # Manual trigger
+  workflow_dispatch:
+    inputs:
+      tool:
+        description: 'Tool to check (podman, buildah, skopeo, or all)'
+        required: false
+        type: choice
+        options:
+          - all
+          - podman
+          - buildah
+          - skopeo
+        default: all
+      force_build:
+        description: 'Force build even if version already exists'
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write  # Needed for creating releases
+  id-token: write  # Needed for cosign OIDC signing
+
+jobs:
+  check-podman:
+    name: Check Podman version
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      inputs.tool == 'all' ||
+      inputs.tool == 'podman'
+    outputs:
+      version: ${{ steps.check.outputs.VERSION }}
+      new_version: ${{ steps.check.outputs.NEW_VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for new version
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # Use check-version.sh script
+          ./scripts/check-version.sh podman
+
+      - name: Override if force build
+        if: inputs.force_build == true
+        run: |
+          echo "Force build enabled, will build regardless"
+          echo "NEW_VERSION=true" >> $GITHUB_OUTPUT
+
+  check-buildah:
+    name: Check Buildah version
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      inputs.tool == 'all' ||
+      inputs.tool == 'buildah'
+    outputs:
+      version: ${{ steps.check.outputs.VERSION }}
+      new_version: ${{ steps.check.outputs.NEW_VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for new version
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # Use check-version.sh script
+          ./scripts/check-version.sh buildah
+
+      - name: Override if force build
+        if: inputs.force_build == true
+        run: |
+          echo "Force build enabled, will build regardless"
+          echo "NEW_VERSION=true" >> $GITHUB_OUTPUT
+
+  check-skopeo:
+    name: Check Skopeo version
+    runs-on: ubuntu-latest
+    if: |
+      github.event_name == 'schedule' ||
+      inputs.tool == 'all' ||
+      inputs.tool == 'skopeo'
+    outputs:
+      version: ${{ steps.check.outputs.VERSION }}
+      new_version: ${{ steps.check.outputs.NEW_VERSION }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v6
+
+      - name: Check for new version
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+        run: |
+          # Use check-version.sh script
+          ./scripts/check-version.sh skopeo
+
+      - name: Override if force build
+        if: inputs.force_build == true
+        run: |
+          echo "Force build enabled, will build regardless"
+          echo "NEW_VERSION=true" >> $GITHUB_OUTPUT
+
+  trigger-podman-build:
+    name: Trigger Podman build
+    needs: check-podman
+    if: needs.check-podman.outputs.new_version == 'true'
+    uses: ./.github/workflows/build-podman.yml
+    with:
+      version: ${{ needs.check-podman.outputs.version }}
+
+  trigger-buildah-build:
+    name: Trigger Buildah build
+    needs: check-buildah
+    if: needs.check-buildah.outputs.new_version == 'true'
+    uses: ./.github/workflows/build-buildah.yml
+    with:
+      version: ${{ needs.check-buildah.outputs.version }}
+
+  trigger-skopeo-build:
+    name: Trigger Skopeo build
+    needs: check-skopeo
+    if: needs.check-skopeo.outputs.new_version == 'true'
+    uses: ./.github/workflows/build-skopeo.yml
+    with:
+      version: ${{ needs.check-skopeo.outputs.version }}

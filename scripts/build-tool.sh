@@ -89,27 +89,64 @@ SRC_DIR="$BUILD_DIR/src"
 
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR/bin" "$SRC_DIR"
 
-# Get latest upstream version
-echo "Fetching latest $TOOL version..."
+# Set upstream repository
 UPSTREAM_REPO="containers/$TOOL"
-VERSION=$(gh release list --repo "$UPSTREAM_REPO" --limit 1 --exclude-drafts --exclude-pre-releases | head -1 | awk '{print $1}')
 
-if [[ -z "$VERSION" ]]; then
-  echo "Error: Could not fetch latest version for $TOOL" >&2
-  exit 1
+# Get version (from env or fetch latest)
+if [[ -z "${VERSION:-}" ]]; then
+  echo "Fetching latest $TOOL version..."
+  VERSION=$(gh release list --repo "$UPSTREAM_REPO" --limit 1 --exclude-drafts --exclude-pre-releases | head -1 | awk '{print $1}')
+
+  if [[ -z "$VERSION" ]]; then
+    echo "Error: Could not fetch latest version for $TOOL" >&2
+    exit 1
+  fi
+  echo "Latest version: $VERSION"
+else
+  echo "Using specified version: $VERSION"
 fi
 
-echo "Latest version: $VERSION"
+# Clone/update source with retry
+RETRY_COUNT=3
+RETRY_DELAY=5
 
-# Clone/update source
 if [[ -d "$SRC_DIR/$TOOL" ]]; then
   echo "Updating existing source..."
   cd "$SRC_DIR/$TOOL"
-  git fetch --tags
+
+  for attempt in $(seq 1 $RETRY_COUNT); do
+    if git fetch --tags; then
+      break
+    else
+      if [[ $attempt -lt $RETRY_COUNT ]]; then
+        echo "Warning: git fetch failed (attempt $attempt/$RETRY_COUNT), retrying in ${RETRY_DELAY}s..." >&2
+        sleep $RETRY_DELAY
+      else
+        echo "Error: git fetch failed after $RETRY_COUNT attempts" >&2
+        exit 1
+      fi
+    fi
+  done
+
   git checkout "$VERSION"
 else
   echo "Cloning source..."
-  git clone --depth 1 --branch "$VERSION" "https://github.com/$UPSTREAM_REPO.git" "$SRC_DIR/$TOOL"
+
+  for attempt in $(seq 1 $RETRY_COUNT); do
+    if git clone --depth 1 --branch "$VERSION" "https://github.com/$UPSTREAM_REPO.git" "$SRC_DIR/$TOOL"; then
+      break
+    else
+      if [[ $attempt -lt $RETRY_COUNT ]]; then
+        echo "Warning: git clone failed (attempt $attempt/$RETRY_COUNT), retrying in ${RETRY_DELAY}s..." >&2
+        sleep $RETRY_DELAY
+        rm -rf "$SRC_DIR/$TOOL"  # Clean up partial clone
+      else
+        echo "Error: git clone failed after $RETRY_COUNT attempts" >&2
+        exit 1
+      fi
+    fi
+  done
+
   cd "$SRC_DIR/$TOOL"
 fi
 

@@ -87,10 +87,10 @@ for FILE in "$@"; do
       echo "  Run ID: ${GITHUB_RUN_ID:-unknown}"
     fi
 
-    ((SUCCESS_COUNT++))
+    SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
   else
     echo "✗ Failed to sign: $(basename "$FILE")" >&2
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
   fi
 
   echo ""

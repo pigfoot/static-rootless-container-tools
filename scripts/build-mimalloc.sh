@@ -46,6 +46,13 @@ if ! command -v ninja &> /dev/null; then
   exit 1
 fi
 
+# Clone mimalloc if not exists
+if [[ ! -f "$MIMALLOC_DIR/CMakeLists.txt" ]]; then
+  echo "Cloning mimalloc..."
+  mkdir -p "$(dirname "$MIMALLOC_DIR")"
+  git clone --depth 1 --branch v2.1.7 https://github.com/microsoft/mimalloc.git "$MIMALLOC_DIR"
+fi
+
 # Create build directory
 BUILD_DIR="$MIMALLOC_DIR/build-$ARCH"
 mkdir -p "$BUILD_DIR"

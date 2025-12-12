@@ -39,7 +39,7 @@ test_binary() {
   local BINARY_PATH="$1"
   local BINARY_NAME=$(basename "$BINARY_PATH")
 
-  ((TOTAL_COUNT++))
+  TOTAL_COUNT=$((TOTAL_COUNT + 1))
 
   echo "----------------------------------------"
   echo "Testing: $BINARY_NAME"
@@ -48,7 +48,7 @@ test_binary() {
   # Test 1: Binary exists and is executable
   if [[ ! -x "$BINARY_PATH" ]]; then
     echo "✗ FAIL: Binary not executable"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi
   echo "✓ Binary is executable"
@@ -64,18 +64,32 @@ test_binary() {
   else
     echo "✗ FAIL: Binary has dynamic dependencies:"
     echo "$LDD_OUTPUT"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi
 
-  # Test 3: Binary can execute --version
+  # Test 3: Binary can execute --version (skip if cross-compiled)
   echo "Testing --version..."
-  if VERSION_OUTPUT=$("$BINARY_PATH" --version 2>&1); then
+
+  # Detect if binary is cross-compiled
+  BINARY_ARCH=$(file "$BINARY_PATH" | grep -oE 'x86-64|aarch64|ARM aarch64' | head -1)
+  HOST_ARCH=$(uname -m)
+
+  # Normalize architecture names
+  if [[ "$HOST_ARCH" == "x86_64" ]]; then
+    HOST_ARCH="x86-64"
+  elif [[ "$HOST_ARCH" == "aarch64" ]]; then
+    HOST_ARCH="aarch64"
+  fi
+
+  if [[ "$BINARY_ARCH" != "$HOST_ARCH" ]] && [[ -n "$BINARY_ARCH" ]]; then
+    echo "⊘ SKIP: Binary is cross-compiled ($BINARY_ARCH), cannot execute on $HOST_ARCH host"
+  elif VERSION_OUTPUT=$("$BINARY_PATH" --version 2>&1); then
     echo "✓ --version succeeded:"
     echo "  $VERSION_OUTPUT" | head -3
   else
     echo "✗ FAIL: --version failed"
-    ((FAIL_COUNT++))
+    FAIL_COUNT=$((FAIL_COUNT + 1))
     return 1
   fi
 
@@ -84,7 +98,7 @@ test_binary() {
   file "$BINARY_PATH"
   echo "Size: $(du -h "$BINARY_PATH" | cut -f1)"
 
-  ((PASS_COUNT++))
+  PASS_COUNT=$((PASS_COUNT + 1))
   echo "✓ All tests passed for $BINARY_NAME"
   echo ""
 }
