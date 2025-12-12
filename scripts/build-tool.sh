@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build static container tools with Zig cross-compiler
+# Build static container tools with clang + musl
 # Usage: ./scripts/build-tool.sh <tool> [arch] [variant]
 # Example: ./scripts/build-tool.sh podman amd64 full
 #          ./scripts/build-tool.sh buildah arm64
@@ -48,7 +48,7 @@ if [[ "$TOOL" == "podman" && -z "$VARIANT" ]]; then
   VARIANT="full"
 fi
 
-# Map architecture to Zig/Go targets
+# Map architecture to musl/Go targets
 case "$ARCH" in
   amd64)
     ZIG_TARGET="x86_64-linux-musl"
@@ -62,13 +62,15 @@ esac
 
 echo "========================================"
 echo "Building: $TOOL"
-echo "Architecture: $ARCH ($ZIG_TARGET)"
+echo "Architecture: $ARCH (target: $ZIG_TARGET)"
 [[ -n "$VARIANT" ]] && echo "Variant: $VARIANT"
 echo "========================================"
 
 # Check dependencies
-if ! command -v zig &> /dev/null; then
-  echo "Error: zig not found. Please install Zig 0.11+" >&2
+if ! command -v clang &> /dev/null; then
+  echo "Error: clang not found. Please install clang and musl-dev" >&2
+  echo "  Ubuntu/Debian: apt-get install clang musl-dev musl-tools" >&2
+  echo "  Gentoo: emerge sys-devel/clang dev-libs/musl" >&2
   exit 1
 fi
 
@@ -77,9 +79,32 @@ if ! command -v go &> /dev/null; then
   exit 1
 fi
 
-if ! command -v gh &> /dev/null; then
-  echo "Error: gh not found. Please install GitHub CLI" >&2
+if ! command -v curl &> /dev/null; then
+  echo "Error: curl not found. Please install curl" >&2
   exit 1
+fi
+
+# Optional dependencies (warnings only)
+if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
+  # Check for protoc (needed for Rust components like netavark)
+  if ! command -v protoc &> /dev/null; then
+    echo "Warning: protoc not found. Rust components (netavark) may fail to build." >&2
+    echo "  Install with: apt-get install protobuf-compiler (Debian/Ubuntu)" >&2
+    echo "               emerge dev-libs/protobuf (Gentoo)" >&2
+  fi
+
+  # Check for Rust/Cargo (needed for netavark, aardvark-dns)
+  if ! command -v cargo &> /dev/null; then
+    echo "Warning: cargo not found. Rust components will be skipped." >&2
+    echo "  Install Rust from: https://rustup.rs/" >&2
+  fi
+
+  # Check for autoconf/automake (needed for libseccomp source build)
+  if ! command -v autoconf &> /dev/null || ! command -v automake &> /dev/null; then
+    echo "Warning: autoconf/automake not found. libseccomp source build may fail (crun will fail)." >&2
+    echo "  Install with: apt-get install autoconf automake libtool (Debian/Ubuntu)" >&2
+    echo "               emerge sys-devel/autoconf sys-devel/automake (Gentoo)" >&2
+  fi
 fi
 
 # Setup build directories
@@ -94,8 +119,22 @@ UPSTREAM_REPO="containers/$TOOL"
 
 # Get version (from env or fetch latest)
 if [[ -z "${VERSION:-}" ]]; then
-  echo "Fetching latest $TOOL version..."
-  VERSION=$(gh release list --repo "$UPSTREAM_REPO" --limit 1 --exclude-drafts --exclude-pre-releases | head -1 | awk '{print $1}')
+  echo "Fetching latest $TOOL version from GitHub API..."
+  # Use GitHub API instead of gh CLI (no auth required)
+  # Same method as runtime components for consistency
+  VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/releases" \
+    | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+    | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+    | head -1)
+
+  if [[ -z "$VERSION" ]]; then
+    echo "⚠ Warning: Could not fetch version from releases, trying tags..."
+    # Fallback: try tags endpoint
+    VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/tags" \
+      | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | head -1)
+  fi
 
   if [[ -z "$VERSION" ]]; then
     echo "Error: Could not fetch latest version for $TOOL" >&2
@@ -171,11 +210,11 @@ else
   fi
 fi
 
-# Setup Zig cross-compilation environment
-export CC="zig cc -target $ZIG_TARGET"
-export CXX="zig c++ -target $ZIG_TARGET"
-export AR="zig ar"
-export RANLIB="zig ranlib"
+# Setup clang + musl cross-compilation environment
+export CC="clang --target=$ZIG_TARGET"
+export CXX="clang++ --target=$ZIG_TARGET"
+export AR="ar"
+export RANLIB="ranlib"
 
 # Setup CGO for Go build
 export CGO_ENABLED=1
@@ -203,13 +242,123 @@ else
   ldd "$INSTALL_DIR/bin/$TOOL" || true
 fi
 
+# For podman, extract helper binaries
+if [[ "$TOOL" == "podman" ]]; then
+  echo "========================================"
+  echo "Extracting podman helper binaries..."
+  echo "========================================"
+
+  # Build rootlessport (critical for port forwarding)
+  echo "Building rootlessport..."
+  CGO_ENABLED=0 make bin/rootlessport \
+    BUILDFLAGS=" -mod=vendor -ldflags=\"-s -w -extldflags '-static'\""
+
+  mkdir -p "$INSTALL_DIR/lib/podman"
+  mv bin/rootlessport "$INSTALL_DIR/lib/podman/"
+
+  if ldd "$INSTALL_DIR/lib/podman/rootlessport" 2>&1 | grep -q "not a dynamic executable"; then
+    echo "✓ rootlessport is static"
+  else
+    echo "⚠ Warning: rootlessport may have dynamic dependencies"
+  fi
+
+  # Build quadlet (systemd generator for .container files)
+  echo "Building quadlet..."
+  # Custom linker flag to set podman binary directory
+  export LDFLAGS_QUADLET="-X github.com/containers/podman/v5/pkg/systemd/quadlet._binDir=/usr/local/bin"
+
+  CGO_ENABLED=0 make bin/quadlet \
+    LDFLAGS_PODMAN="-s -w -extldflags '-static' ${LDFLAGS_QUADLET}" \
+    BUILDTAGS="$BUILD_TAGS"
+
+  mkdir -p "$INSTALL_DIR/libexec/podman"
+  mv bin/quadlet "$INSTALL_DIR/libexec/podman/"
+
+  if ldd "$INSTALL_DIR/libexec/podman/quadlet" 2>&1 | grep -q "not a dynamic executable"; then
+    echo "✓ quadlet is static"
+  else
+    echo "⚠ Warning: quadlet may have dynamic dependencies"
+  fi
+fi
+
 # For podman-full, build runtime components
 if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
   echo "========================================"
   echo "Building runtime components for podman-full..."
   echo "========================================"
 
+  # Build libseccomp from source (required for crun)
+  # Reason: Ensures compatibility with Ubuntu 24.04 and musl libc static linking
+  echo "----------------------------------------"
+  echo "Building: libseccomp (dependency for crun)"
+  echo "----------------------------------------"
+
+  LIBSECCOMP_VERSION="v2.5.5"
+  LIBSECCOMP_SRC="$SRC_DIR/libseccomp"
+  LIBSECCOMP_INSTALL="$BUILD_DIR/libseccomp-install"
+
+  if [[ ! -d "$LIBSECCOMP_SRC" ]]; then
+    echo "Fetching libseccomp $LIBSECCOMP_VERSION..."
+    git clone --depth 1 --branch "$LIBSECCOMP_VERSION" \
+      https://github.com/seccomp/libseccomp "$LIBSECCOMP_SRC" || {
+      echo "⚠ Warning: Failed to clone libseccomp, crun may fail..."
+    }
+  fi
+
+  if [[ -d "$LIBSECCOMP_SRC" ]]; then
+    cd "$LIBSECCOMP_SRC"
+
+    # Clean previous build
+    make distclean 2>/dev/null || true
+
+    # Generate configure script
+    if [[ ! -f configure ]]; then
+      ./autogen.sh || {
+        echo "⚠ Warning: autogen.sh failed for libseccomp"
+      }
+    fi
+
+    # Configure for static build
+    ./configure \
+      --prefix="$LIBSECCOMP_INSTALL" \
+      --enable-static \
+      --disable-shared \
+      CC="clang --target=$ZIG_TARGET" \
+      CFLAGS="-O2 -fPIC" || {
+      echo "⚠ Warning: configure failed for libseccomp"
+    }
+
+    # Build and install
+    make -j$(nproc) || {
+      echo "⚠ Warning: make failed for libseccomp"
+    }
+
+    make install || {
+      echo "⚠ Warning: make install failed for libseccomp"
+    }
+
+    if [[ -f "$LIBSECCOMP_INSTALL/lib/libseccomp.a" ]]; then
+      echo "✓ libseccomp built successfully"
+      # Export PKG_CONFIG_PATH so pkg-config can find it
+      export PKG_CONFIG_PATH="$LIBSECCOMP_INSTALL/lib/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+      # Export CPPFLAGS and LDFLAGS so configure scripts can find headers and libs directly
+      export CPPFLAGS="-I$LIBSECCOMP_INSTALL/include${CPPFLAGS:+ $CPPFLAGS}"
+      export LDFLAGS="-L$LIBSECCOMP_INSTALL/lib${LDFLAGS:+ $LDFLAGS}"
+      # Export CGO flags for compatibility (reserved for future use)
+      export CGO_CFLAGS="$CGO_CFLAGS -I$LIBSECCOMP_INSTALL/include"
+      export CGO_LDFLAGS="$CGO_LDFLAGS -L$LIBSECCOMP_INSTALL/lib"
+      echo "  PKG_CONFIG_PATH=$PKG_CONFIG_PATH"
+      echo "  CPPFLAGS=$CPPFLAGS"
+      echo "  LDFLAGS=$LDFLAGS"
+      echo "  CGO_CFLAGS=$CGO_CFLAGS"
+      echo "  CGO_LDFLAGS=$CGO_LDFLAGS"
+    else
+      echo "⚠ Warning: libseccomp.a not found, crun may fail"
+    fi
+  fi
+
   # Array of runtime components with their repos
+  # Note: runc removed - not in original spec, crun is the default OCI runtime
   declare -A COMPONENTS=(
     [crun]="containers/crun"
     [conmon]="containers/conmon"
@@ -226,11 +375,38 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
     echo "----------------------------------------"
 
     COMP_REPO="${COMPONENTS[$component]}"
-    COMP_VERSION=$(gh release list --repo "$COMP_REPO" --limit 1 --exclude-drafts --exclude-pre-releases | head -1 | awk '{print $1}')
 
-    if [[ -z "$COMP_VERSION" ]]; then
-      echo "⚠ Warning: Could not fetch version for $component, skipping..."
-      continue
+    # Special handling for pasta (not on GitHub)
+    if [[ "$component" == "pasta" ]]; then
+      # pasta uses git://passt.top/passt
+      # Get latest tag from git repo directly
+      COMP_VERSION=$(git ls-remote --tags git://passt.top/passt 2>/dev/null | grep -v '\^{}' | tail -1 | awk '{print $2}' | sed 's#refs/tags/##')
+      if [[ -z "$COMP_VERSION" ]]; then
+        echo "⚠ Warning: Could not fetch pasta version, using hardcoded version"
+        COMP_VERSION="2025_12_10.d04c480"
+      fi
+    else
+      # GitHub repos: use API to get latest stable release tag
+      # This is more reliable than gh CLI and filters for semver format
+      echo "Fetching version from GitHub API..."
+      COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/releases" \
+        | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+        | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+        | head -1)
+
+      if [[ -z "$COMP_VERSION" ]]; then
+        echo "⚠ Warning: Could not fetch version for $component from releases, trying tags..."
+        # Fallback: try tags endpoint
+        COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/tags" \
+          | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+          | head -1)
+      fi
+
+      if [[ -z "$COMP_VERSION" ]]; then
+        echo "⚠ Warning: Could not fetch version for $component, skipping..."
+        continue
+      fi
     fi
 
     echo "Version: $COMP_VERSION"
@@ -241,56 +417,350 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
       git fetch --tags
       git checkout "$COMP_VERSION" 2>/dev/null || git checkout "v$COMP_VERSION" 2>/dev/null || echo "Using existing checkout"
     else
-      git clone --depth 1 --branch "$COMP_VERSION" "https://github.com/$COMP_REPO.git" "$COMP_SRC" 2>/dev/null || \
-      git clone --depth 1 --branch "v$COMP_VERSION" "https://github.com/$COMP_REPO.git" "$COMP_SRC" || {
+      # Special handling for pasta (not on GitHub)
+      if [[ "$component" == "pasta" ]]; then
+        CLONE_URL="git://passt.top/passt"
+      else
+        CLONE_URL="https://github.com/$COMP_REPO.git"
+      fi
+
+      git clone --depth 1 --branch "$COMP_VERSION" "$CLONE_URL" "$COMP_SRC" 2>/dev/null || \
+      git clone --depth 1 --branch "v$COMP_VERSION" "$CLONE_URL" "$COMP_SRC" || {
         echo "⚠ Warning: Failed to clone $component, skipping..."
         continue
       }
       cd "$COMP_SRC"
     fi
 
-    # Build based on language/build system
+    # Build based on language/build system (following mgoltzsche/podman-static patterns)
     case "$component" in
-      netavark|aardvark-dns)
-        # Rust components
+      conmon)
+        # conmon: Use direct make, NOT autotools configure
+        # Makefile auto-enables systemd if not using -static flag
+        echo "Building conmon (plain Makefile)..."
+        make clean 2>/dev/null || true
+        make git-vars bin/conmon \
+          PKG_CONFIG='pkg-config --static' \
+          CFLAGS='-std=c99 -Os -Wall -Wextra -static' \
+          LDFLAGS='-s -w -static' || {
+            echo "⚠ Warning: Failed to build $component, skipping..."
+            continue
+          }
+        # Copy from build directory
+        if [[ -f "bin/conmon" ]]; then
+          cp bin/conmon "$INSTALL_DIR/bin/" && echo "✓ Built conmon"
+        else
+          echo "⚠ Warning: Could not find conmon binary"
+          continue
+        fi
+        ;;
+
+      netavark)
+        # netavark: Rust native build with musl target for true static linking
+        echo "Building netavark (Rust, static)..."
         if ! command -v cargo &> /dev/null; then
           echo "⚠ Warning: cargo not found, skipping $component"
           continue
         fi
-        cargo build --release --target "$ZIG_TARGET" 2>/dev/null || {
+
+        # Check for protoc (required by netavark's build.rs)
+        if ! command -v protoc &> /dev/null; then
+          echo "⚠ Warning: protoc not found, netavark build will fail"
+          echo "  Install with: apt-get install protobuf-compiler (Debian/Ubuntu)"
+          echo "               emerge dev-libs/protobuf (Gentoo)"
+          echo "  Skipping $component..."
+          continue
+        fi
+
+        # Try musl target first (preferred), fallback to static feature
+        RUST_TARGET=""
+        BUILD_PATH="target/release"
+
+        if command -v rustup &> /dev/null; then
+          # Check if musl target is available
+          if rustup target list | grep -q "x86_64-unknown-linux-musl (installed)"; then
+            RUST_TARGET="--target x86_64-unknown-linux-musl"
+            BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+            echo "  Using musl target for static linking"
+          else
+            echo "  musl target not installed, trying to add..."
+            rustup target add x86_64-unknown-linux-musl 2>/dev/null && {
+              RUST_TARGET="--target x86_64-unknown-linux-musl"
+              BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+              echo "  ✓ Added musl target"
+            }
+          fi
+        fi
+
+        # If no musl target, use static feature flag
+        if [[ -z "$RUST_TARGET" ]]; then
+          export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
+          echo "  Using RUSTFLAGS for static linking"
+        else
+          export RUSTFLAGS='-C link-arg=-s'
+        fi
+
+        cargo build --release $RUST_TARGET || {
           echo "⚠ Warning: Failed to build $component, skipping..."
           continue
         }
-        cp "target/$ZIG_TARGET/release/$component" "$INSTALL_DIR/bin/" 2>/dev/null || echo "⚠ Could not copy binary"
+
+        if [[ -f "$BUILD_PATH/netavark" ]]; then
+          cp "$BUILD_PATH/netavark" "$INSTALL_DIR/bin/" && echo "✓ Built netavark"
+        else
+          echo "⚠ Warning: Could not find netavark binary at $BUILD_PATH"
+          continue
+        fi
         ;;
 
-      crun|conmon|fuse-overlayfs|catatonit)
-        # C components with autotools/make
-        if [[ -f "./autogen.sh" ]]; then
-          ./autogen.sh || true
+      aardvark-dns)
+        # aardvark-dns: Rust native build with musl target for true static linking
+        echo "Building aardvark-dns (Rust, static)..."
+        if ! command -v cargo &> /dev/null; then
+          echo "⚠ Warning: cargo not found, skipping $component"
+          continue
         fi
-        if [[ -f "./configure" ]]; then
-          ./configure --host="$ZIG_TARGET" --prefix="$INSTALL_DIR" --enable-static --disable-shared 2>/dev/null || {
-            echo "⚠ Warning: Configure failed for $component, skipping..."
+
+        # Try musl target first (preferred), fallback to static feature
+        RUST_TARGET=""
+        BUILD_PATH="target/release"
+
+        if command -v rustup &> /dev/null; then
+          # Check if musl target is available
+          if rustup target list | grep -q "x86_64-unknown-linux-musl (installed)"; then
+            RUST_TARGET="--target x86_64-unknown-linux-musl"
+            BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+            echo "  Using musl target for static linking"
+          else
+            echo "  musl target not installed, trying to add..."
+            rustup target add x86_64-unknown-linux-musl 2>/dev/null && {
+              RUST_TARGET="--target x86_64-unknown-linux-musl"
+              BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+              echo "  ✓ Added musl target"
+            }
+          fi
+        fi
+
+        # If no musl target, use static feature flag
+        if [[ -z "$RUST_TARGET" ]]; then
+          export RUSTFLAGS='-C target-feature=+crt-static -C link-arg=-s'
+          echo "  Using RUSTFLAGS for static linking"
+        else
+          export RUSTFLAGS='-C link-arg=-s'
+        fi
+
+        cargo build --release $RUST_TARGET || {
+          echo "⚠ Warning: Failed to build $component, skipping..."
+          continue
+        }
+
+        if [[ -f "$BUILD_PATH/aardvark-dns" ]]; then
+          cp "$BUILD_PATH/aardvark-dns" "$INSTALL_DIR/bin/" && echo "✓ Built aardvark-dns"
+        else
+          echo "⚠ Warning: Could not find aardvark-dns binary at $BUILD_PATH"
+          continue
+        fi
+        ;;
+
+      fuse-overlayfs)
+        # fuse-overlayfs: TWO-STAGE BUILD - requires libfuse first
+        echo "Building fuse-overlayfs (two-stage: libfuse → fuse-overlayfs)..."
+
+        # Stage 1: Build libfuse dependency
+        echo "  Stage 1/2: Building libfuse..."
+        LIBFUSE_VERSION="fuse-3.17.4"
+        LIBFUSE_SRC="$SRC_DIR/libfuse"
+        LIBFUSE_INSTALL="$LIBFUSE_SRC/install"
+
+        if [[ ! -d "$LIBFUSE_SRC" ]]; then
+          git clone --depth 1 --branch "$LIBFUSE_VERSION" \
+            https://github.com/libfuse/libfuse "$LIBFUSE_SRC" || {
+            echo "⚠ Warning: Failed to clone libfuse, skipping fuse-overlayfs..."
             continue
           }
         fi
-        make clean 2>/dev/null || true
-        make -j$(nproc) 2>/dev/null || {
-          echo "⚠ Warning: Build failed for $component, skipping..."
+
+        cd "$LIBFUSE_SRC"
+        if ! command -v meson &> /dev/null || ! command -v ninja &> /dev/null; then
+          echo "⚠ Warning: meson or ninja not found, skipping fuse-overlayfs..."
+          continue
+        fi
+
+        rm -rf build install 2>/dev/null || true
+        mkdir -p build
+        cd build
+
+        # Install to local directory to avoid permission issues
+        LDFLAGS="-lpthread -s -w -static" meson \
+          --prefix "$LIBFUSE_INSTALL" \
+          -D default_library=static \
+          -D examples=false \
+          .. || {
+          echo "⚠ Warning: meson configure failed for libfuse"
+          cat meson-logs/meson-log.txt 2>/dev/null || true
           continue
         }
-        make install 2>/dev/null || cp "$component" "$INSTALL_DIR/bin/" 2>/dev/null || echo "⚠ Could not install $component"
+
+        ninja || {
+          echo "⚠ Warning: ninja build failed for libfuse"
+          continue
+        }
+
+        # Manual install (skip ninja install to avoid permission issues)
+        # The install_helper.sh script tries to access /etc/init.d/ which fails in containers
+        echo "  Installing libfuse manually (skip install_helper.sh)..."
+        mkdir -p "$LIBFUSE_INSTALL"/{lib,include/fuse3,lib/pkgconfig}
+
+        # Copy static library
+        if [[ -f lib/libfuse3.a ]]; then
+          cp lib/libfuse3.a "$LIBFUSE_INSTALL/lib/" && echo "    ✓ Copied libfuse3.a"
+        else
+          echo "⚠ Warning: libfuse3.a not found"
+          continue
+        fi
+
+        # Copy header files
+        cp ../include/*.h "$LIBFUSE_INSTALL/include/fuse3/" 2>/dev/null && echo "    ✓ Copied headers"
+
+        # Copy generated config header (CRITICAL for fuse-overlayfs compilation)
+        if [[ -f libfuse_config.h ]]; then
+          cp libfuse_config.h "$LIBFUSE_INSTALL/include/fuse3/" && echo "    ✓ Copied libfuse_config.h"
+        else
+          echo "⚠ Warning: libfuse_config.h not found (fuse-overlayfs will fail)"
+        fi
+
+        # Copy pkg-config file
+        if [[ -f meson-private/fuse3.pc ]]; then
+          cp meson-private/fuse3.pc "$LIBFUSE_INSTALL/lib/pkgconfig/" && echo "    ✓ Copied fuse3.pc"
+        else
+          echo "⚠ Warning: fuse3.pc not found"
+        fi
+
+        echo "  ✓ libfuse built and installed to $LIBFUSE_INSTALL (manual install)"
+
+        # Stage 2: Build fuse-overlayfs
+        echo "  Stage 2/2: Building fuse-overlayfs..."
+        cd "$COMP_SRC"
+
+        # Set PKG_CONFIG_PATH so configure can find libfuse
+        export PKG_CONFIG_PATH="$LIBFUSE_INSTALL/lib/pkgconfig:$LIBFUSE_INSTALL/lib64/pkgconfig${PKG_CONFIG_PATH:+:$PKG_CONFIG_PATH}"
+
+        # Set CPPFLAGS and LDFLAGS to help find headers/libs
+        export CPPFLAGS="-I$LIBFUSE_INSTALL/include${CPPFLAGS:+ $CPPFLAGS}"
+        FUSE_LDFLAGS="-L$LIBFUSE_INSTALL/lib64 -L$LIBFUSE_INSTALL/lib -s -w -static"
+
+        sh autogen.sh || {
+          echo "⚠ Warning: autogen.sh failed for fuse-overlayfs"
+          continue
+        }
+
+        LIBS="-ldl" LDFLAGS="$FUSE_LDFLAGS" ./configure --prefix=/usr || {
+          echo "⚠ Warning: configure failed for fuse-overlayfs"
+          continue
+        }
+
+        make clean 2>/dev/null || true
+        make -j$(nproc) || {
+          echo "⚠ Warning: make failed for fuse-overlayfs"
+          continue
+        }
+
+        # Install to INSTALL_DIR using DESTDIR
+        make install DESTDIR="$INSTALL_DIR" || {
+          echo "⚠ Warning: make install failed for fuse-overlayfs"
+          # Try to copy manually if install fails
+          if [[ -f "fuse-overlayfs" ]]; then
+            cp fuse-overlayfs "$INSTALL_DIR/bin/" && echo "  ✓ Copied fuse-overlayfs manually"
+          fi
+          continue
+        }
+
+        # Move binaries from usr/bin to bin/
+        if [[ -f "$INSTALL_DIR/usr/bin/fuse-overlayfs" ]]; then
+          mv "$INSTALL_DIR/usr/bin/fuse-overlayfs" "$INSTALL_DIR/bin/" && echo "  ✓ Built fuse-overlayfs"
+        fi
+        if [[ -f "$INSTALL_DIR/usr/bin/fusermount3" ]]; then
+          mv "$INSTALL_DIR/usr/bin/fusermount3" "$INSTALL_DIR/bin/" && echo "  ✓ Built fusermount3"
+        fi
+
+        # Clean up empty directories
+        rm -rf "$INSTALL_DIR/usr" 2>/dev/null || true
+        ;;
+
+      crun)
+        # crun: autotools with specific flags to disable systemd
+        echo "Building crun (autotools, --disable-systemd)..."
+        ./autogen.sh || {
+          echo "⚠ Warning: autogen.sh failed for crun"
+          continue
+        }
+        ./configure --disable-systemd --enable-embedded-yajl || {
+          echo "⚠ Warning: configure failed for crun"
+          continue
+        }
+        make clean 2>/dev/null || true
+        # Preserve LDFLAGS from environment (contains -L for libseccomp)
+        make LDFLAGS="$LDFLAGS -static-libgcc -all-static" EXTRA_LDFLAGS='-s -w' -j$(nproc) || {
+          echo "⚠ Warning: make failed for crun"
+          continue
+        }
+        make install || {
+          echo "⚠ Warning: make install failed for crun"
+          continue
+        }
+        # crun installs to /usr/local/bin/crun
+        if [[ -f "/usr/local/bin/crun" ]]; then
+          cp /usr/local/bin/crun "$INSTALL_DIR/bin/" && echo "✓ Built crun"
+        elif [[ -f "crun" ]]; then
+          cp crun "$INSTALL_DIR/bin/" && echo "✓ Built crun"
+        else
+          echo "⚠ Warning: Could not find crun binary"
+          continue
+        fi
+        ;;
+
+      catatonit)
+        # catatonit: autotools but NO make install (copy directly)
+        echo "Building catatonit (autotools, no install)..."
+        ./autogen.sh || {
+          echo "⚠ Warning: autogen.sh failed for catatonit"
+          continue
+        }
+        ./configure LDFLAGS="-static" --prefix=/ --bindir=/bin || {
+          echo "⚠ Warning: configure failed for catatonit"
+          continue
+        }
+        make clean 2>/dev/null || true
+        make -j$(nproc) || {
+          echo "⚠ Warning: make failed for catatonit"
+          continue
+        }
+        # Binary is ./catatonit in build directory, don't use make install
+        if [[ -f "./catatonit" ]]; then
+          cp ./catatonit "$INSTALL_DIR/bin/" && echo "✓ Built catatonit"
+        else
+          echo "⚠ Warning: Could not find catatonit binary"
+          continue
+        fi
         ;;
 
       pasta)
-        # pasta has custom Makefile
+        # pasta: custom Makefile (already correct!)
+        # make static produces both pasta and pasta.avx2 (if AVX2 available)
+        echo "Building pasta (make static)..."
         make clean 2>/dev/null || true
-        make -j$(nproc) 2>/dev/null || {
+        make static 2>/dev/null || make -j$(nproc) 2>/dev/null || {
           echo "⚠ Warning: Build failed for pasta, skipping..."
           continue
         }
-        cp pasta "$INSTALL_DIR/bin/" 2>/dev/null || echo "⚠ Could not copy pasta binary"
+        # Copy pasta binary
+        if [[ -f "pasta" ]]; then
+          cp pasta "$INSTALL_DIR/bin/" && echo "✓ Built pasta"
+        fi
+        # Copy pasta.avx2 if it was built
+        if [[ -f "pasta.avx2" ]]; then
+          cp pasta.avx2 "$INSTALL_DIR/bin/" && echo "✓ Built pasta.avx2 (AVX2 optimized)"
+        fi
         ;;
     esac
 

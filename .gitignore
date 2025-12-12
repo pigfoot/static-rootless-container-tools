@@ -126,3 +126,9 @@ checksums.txt
 # Zig cache
 zig-cache/
 zig-out/
+
+# Container config files (downloaded from upstream during build)
+etc/containers/
+
+# Systemd files cache (downloaded from podman source during packaging)
+build/systemd-files/

@@ -1,13 +1,18 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 1.1.0
-Bump rationale: Align with implementation decisions from brainstorming (MINOR)
+Version change: 1.1.0 → 1.2.0
+Bump rationale: Migration from Zig to Clang due to compatibility issues (MINOR)
 
 Modified sections:
-  - Principle III (Reproducible Builds): Updated to reflect Zig primary, Dockerfile fallback
-  - Build Artifacts: Changed .tar.gz to .tar.zst format
-  - Build Environment: Updated to Zig + mimalloc with Alpine fallback
+  - Principle III (Reproducible Builds): Clarified from "Pin specific versions" to "documented minimum versions"
+  - Build Environment: Updated from Zig to Clang with musl target
+  - Minimum Requirements: Added Clang (musl support), Go 1.21+, protobuf-compiler
+
+Migration rationale:
+  - Zig incompatibility: pasta __cpu_model symbol, fuse-overlayfs meson detection
+  - Clang advantages: GCC built-in support, better ecosystem compatibility
+  - Versions not pinned: Using latest stable versions from distribution packages
 
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No changes needed (generic template)
@@ -47,10 +52,11 @@ Each tool (podman, buildah, skopeo) MUST be tracked and released independently.
 
 Build processes MUST be deterministic and reproducible.
 
-- Pin specific versions of build dependencies (Zig version, Go version, etc.)
+- Use well-defined build dependencies with documented minimum versions
 - Document exact build steps in scripts and Makefile
 - Maintain Alpine-based Dockerfile as reproducibility fallback
 - Same inputs MUST produce functionally equivalent outputs
+- Build environment can be recreated from documentation
 
 **Rationale**: Reproducibility enables verification, debugging, and trust in the build artifacts.
 
@@ -106,10 +112,11 @@ Podman additionally provides:
 
 ### Build Environment
 
-- **Primary**: Zig cross-compiler with musl target (simpler cross-compilation)
-- **Fallback**: Alpine Linux container with musl-based GCC toolchain
+- **Primary**: Clang with musl target (GCC compatibility, build system support)
+- **Fallback**: Alpine Linux container with musl-based toolchain
 - **Allocator**: mimalloc (statically linked, replaces musl's slow allocator)
-- **Cross-compilation**: Zig cross-compile on amd64 runner; native arm64 runner as fallback
+- **Cross-compilation**: Clang cross-compile on amd64 runner; native arm64 runner as fallback
+- **Minimum Requirements**: Clang (any version with musl support), Go 1.21+, protobuf-compiler (for Rust components)
 
 ## Release Pipeline
 
@@ -117,7 +124,11 @@ Podman additionally provides:
 
 ```
 Schedule: Daily at UTC 00:00
-Method: GitHub API check against upstream repos
+Method: curl + GitHub API (no authentication required for public repos)
+  - Endpoint: https://api.github.com/repos/{org}/{repo}/releases
+  - Fallback: https://api.github.com/repos/{org}/{repo}/tags
+  - Filter: Semver regex ^v?[0-9]+\.[0-9]+(\.[0-9]+)?$ (excludes pre-releases)
+Upstream repos:
   - github.com/containers/podman
   - github.com/containers/buildah
   - github.com/containers/skopeo
@@ -160,4 +171,4 @@ Method: GitHub API check against upstream repos
 - Upstream reference: https://github.com/mgoltzsche/podman-static
 - Container tools: https://github.com/containers
 
-**Version**: 1.1.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-12
+**Version**: 1.2.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-13

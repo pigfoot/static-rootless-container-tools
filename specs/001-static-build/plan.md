@@ -5,15 +5,15 @@
 
 ## Summary
 
-Build a fully automated release pipeline for static podman, buildah, and skopeo binaries targeting linux/amd64 and linux/arm64. Uses Zig as cross-compiler with musl libc and mimalloc for optimal static binaries. Each tool is tracked and released independently based on upstream versions, with daily automated checks and manual trigger support.
+Build a fully automated release pipeline for static podman, buildah, and skopeo binaries targeting linux/amd64 and linux/arm64. Uses Clang with musl target and mimalloc for optimal static binaries. Each tool is tracked and released independently based on upstream versions, with daily automated checks and manual trigger support.
 
 ## Technical Context
 
 **Language/Version**: Bash scripts, YAML (GitHub Actions), Dockerfile (optional fallback)
-**Compiler**: Zig 0.11+ (as C/C++ cross-compiler for CGO dependencies)
+**Compiler**: Clang 18+ with musl target (for C/C++ cross-compilation and CGO dependencies)
 **Libc**: musl (for truly static binaries)
 **Allocator**: mimalloc (static linked, replaces musl's slow allocator)
-**Primary Dependencies**: Go toolchain, Zig, cosign, gh CLI
+**Primary Dependencies**: Go toolchain, Clang, musl-dev, musl-tools, protobuf-compiler, cosign, curl (for GitHub API)
 **Storage**: N/A (version tracking via GitHub Releases)
 **Testing**: Shell-based smoke tests (ldd verification, version checks, binary execution)
 **Target Platform**: GitHub Actions runners (ubuntu-latest for cross-compile)
@@ -28,9 +28,9 @@ Build a fully automated release pipeline for static podman, buildah, and skopeo 
 
 | Principle | Status | Evidence |
 |-----------|--------|----------|
-| I. Truly Static Binaries | ✅ PASS | Zig + musl target produces static binaries; verified with `ldd` |
+| I. Truly Static Binaries | ✅ PASS | Clang + musl target produces static binaries; verified with `ldd` |
 | II. Independent Tool Releases | ✅ PASS | Separate workflows per tool; version tracking per tool |
-| III. Reproducible Builds | ✅ PASS | Pinned Zig version; containerized fallback available |
+| III. Reproducible Builds | ✅ PASS | Documented minimum versions; exact build steps in scripts; containerized fallback available |
 | IV. Minimal Dependencies | ✅ PASS | Only required runtime components in podman-full; minimal has binary only |
 | V. Automated Release Pipeline | ✅ PASS | Daily cron + workflow_dispatch; cosign signing; auto GitHub Release |
 
@@ -61,7 +61,7 @@ specs/001-static-build/
 
 scripts/
 ├── check-version.sh             # Compare upstream vs local releases
-├── build-tool.sh                # Common build logic (Zig + Go + mimalloc)
+├── build-tool.sh                # Common build logic (Clang + Go + mimalloc)
 ├── package.sh                   # Create tarball with bin/lib/etc structure
 └── sign-release.sh              # Cosign signing
 
@@ -69,7 +69,7 @@ build/
 ├── mimalloc/                    # mimalloc source for static compilation
 └── patches/                     # Any patches needed for dependencies
 
-Dockerfile.podman               # Fallback: Alpine-based build (if Zig fails)
+Dockerfile.podman               # Fallback: Alpine-based build environment
 Dockerfile.buildah              # Fallback: Alpine-based build
 Dockerfile.skopeo               # Fallback: Alpine-based build
 
@@ -77,6 +77,44 @@ Makefile                        # Local build/test commands
 ```
 
 **Structure Decision**: Build infrastructure project with GitHub Actions workflows as primary, scripts for build logic, and Dockerfiles as fallback.
+
+## Runtime Component Build Requirements
+
+### Go Components (podman, buildah, skopeo)
+- **Build System**: Go modules
+- **Dependencies**: Go 1.21+, Clang, musl-dev
+- **CGO**: Enabled with Clang cross-compiler
+- **Static Linking**: `-ldflags "-linkmode external -extldflags '-static'"`
+
+### Rust Components (netavark, aardvark-dns)
+- **Build System**: Cargo
+- **Dependencies**: Rust/Cargo, protobuf-compiler (required for netavark)
+- **Static Linking**: Use musl target (`--target x86_64-unknown-linux-musl`)
+- **Fallback**: RUSTFLAGS with `+crt-static` (if musl target unavailable)
+
+### C Components with Make (conmon, pasta, catatonit)
+- **Build System**: Makefile
+- **Dependencies**: Clang, musl-dev, make
+- **Special Requirements**:
+  - conmon: Requires libglib2.0-dev, disable systemd (`USE_JOURNALD=0`) ✅ Fixed
+  - pasta: Source from `git://passt.top/passt` (NOT GitHub) ✅ Fixed
+  - catatonit: Direct copy from build directory ✅ Working
+
+**Note**: runc originally planned but removed (not in spec requirements, redundant with crun). See [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md) for details.
+
+### C Components with Autotools (crun)
+- **Build System**: autotools (./configure)
+- **Dependencies**: Clang, musl-dev, autoconf, automake, libcap-dev
+- **Configure Flags**: `--disable-systemd --enable-embedded-yajl`
+- **Static Linking**: `LDFLAGS='-static-libgcc -all-static'`
+
+### C Components with Meson (fuse-overlayfs)
+- **Build System**: meson + ninja
+- **Dependencies**: Clang, musl-dev, meson, ninja
+- **Two-Stage Build**: libfuse (meson) → fuse-overlayfs (autotools)
+- **Install Path**: Local prefix (avoid permission issues) ⚠️ In Progress
+  - Issue: libfuse install_helper.sh tries to access /etc/init.d/ (permission denied)
+  - Solution: Skip `ninja install`, manually copy built libfuse files to local prefix
 
 ## Build Artifacts
 
@@ -129,8 +167,10 @@ podman-v5.3.1/
 
 ## Complexity Tracking
 
-| Experimental Choice | Why Needed | Fallback Plan |
-|---------------------|------------|---------------|
-| Zig cross-compiler | Simpler cross-compile, no QEMU/ARM runners | Dockerfile.* with Alpine/musl |
-| mimalloc static link | musl allocator is slow | Accept musl allocator for CLI tools |
-| Cross-compile arm64 | Avoid ARM runner cost/complexity | Use ubuntu-24.04-arm native runner |
+| Technical Choice | Why Needed | Fallback Plan | Status |
+|------------------|------------|---------------|--------|
+| Clang + musl target | GCC compatibility, build system support | Dockerfile.* with Alpine/musl | **ACTIVE** - Verified working |
+| mimalloc static link | musl allocator is slow | Accept musl allocator for CLI tools | **ACTIVE** |
+| Cross-compile arm64 | Avoid ARM runner cost/complexity | Use ubuntu-24.04-arm native runner | **ACTIVE** |
+
+**Historical Note**: Zig cross-compiler was initially considered but abandoned due to ecosystem compatibility issues. See [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md) for details.

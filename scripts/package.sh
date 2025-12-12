@@ -38,6 +38,7 @@ PACKAGE_DIR="${TOOL}-${VERSION}"
 BUILD_DIR="$PROJECT_ROOT/build/$TOOL-$ARCH"
 INSTALL_DIR="$BUILD_DIR/install"
 STAGING_DIR="$BUILD_DIR/staging"
+CONFIG_DIR="$PROJECT_ROOT/etc/containers"
 
 echo "========================================"
 echo "Packaging: $TOOL $VERSION"
@@ -46,6 +47,87 @@ echo "Architecture: $ARCH"
 echo "Output: ${TARBALL_NAME}.tar.zst"
 echo "========================================"
 
+# Download config files from upstream if not present
+echo "Checking container config files..."
+mkdir -p "$CONFIG_DIR"
+
+download_config_file() {
+  local url="$1"
+  local output="$2"
+
+  if [[ ! -f "$output" ]]; then
+    echo "Downloading $(basename "$output") from upstream..."
+    curl -fsSL "$url" -o "$output"
+  else
+    echo "✓ $(basename "$output") already exists"
+  fi
+}
+
+# Download from containers organization repos (main branch for latest stable defaults)
+download_config_file \
+  "https://raw.githubusercontent.com/containers/common/main/pkg/config/containers.conf" \
+  "$CONFIG_DIR/containers.conf"
+
+download_config_file \
+  "https://raw.githubusercontent.com/containers/common/main/pkg/seccomp/seccomp.json" \
+  "$CONFIG_DIR/seccomp.json"
+
+download_config_file \
+  "https://raw.githubusercontent.com/containers/storage/main/storage.conf" \
+  "$CONFIG_DIR/storage.conf"
+
+download_config_file \
+  "https://raw.githubusercontent.com/containers/image/main/default-policy.json" \
+  "$CONFIG_DIR/policy.json"
+
+download_config_file \
+  "https://raw.githubusercontent.com/containers/image/main/registries.conf" \
+  "$CONFIG_DIR/registries.conf"
+
+echo "✓ All config files ready"
+echo ""
+
+# Download systemd files from podman source (for systemd integration)
+if [[ "$TOOL" == "podman" ]]; then
+  echo "Downloading systemd integration files..."
+  SYSTEMD_CACHE="$PROJECT_ROOT/build/systemd-files"
+  mkdir -p "$SYSTEMD_CACHE"
+
+  # Use version to download corresponding systemd files
+  PODMAN_SRC_URL="https://github.com/containers/podman/archive/${VERSION}.tar.gz"
+  PODMAN_SRC_DIR="$SYSTEMD_CACHE/podman-${VERSION#v}"
+
+  if [[ ! -d "$PODMAN_SRC_DIR" ]]; then
+    echo "Fetching podman source for systemd files..."
+    curl -fsSL "$PODMAN_SRC_URL" | tar -xz -C "$SYSTEMD_CACHE"
+  fi
+
+  if [[ -d "$PODMAN_SRC_DIR/contrib/systemd" ]]; then
+    # Copy systemd service/socket files
+    SYSTEMD_SYSTEM_DIR="$CONFIG_DIR/systemd/system"
+    SYSTEMD_USER_DIR="$CONFIG_DIR/systemd/user"
+
+    mkdir -p "$SYSTEMD_SYSTEM_DIR"
+    mkdir -p "$SYSTEMD_USER_DIR"
+
+    # System-wide service files
+    if [[ -d "$PODMAN_SRC_DIR/contrib/systemd/system" ]]; then
+      cp "$PODMAN_SRC_DIR/contrib/systemd/system/"*.service "$SYSTEMD_SYSTEM_DIR/" 2>/dev/null || true
+      cp "$PODMAN_SRC_DIR/contrib/systemd/system/"*.socket "$SYSTEMD_SYSTEM_DIR/" 2>/dev/null || true
+      echo "✓ Copied system-wide systemd files"
+    fi
+
+    # User service files
+    if [[ -d "$PODMAN_SRC_DIR/contrib/systemd/user" ]]; then
+      cp "$PODMAN_SRC_DIR/contrib/systemd/user/"*.service "$SYSTEMD_USER_DIR/" 2>/dev/null || true
+      cp "$PODMAN_SRC_DIR/contrib/systemd/user/"*.socket "$SYSTEMD_USER_DIR/" 2>/dev/null || true
+      echo "✓ Copied user systemd files"
+    fi
+  fi
+fi
+
+echo ""
+
 # Check if build exists
 if [[ ! -d "$INSTALL_DIR/bin" ]]; then
   echo "Error: Build directory not found: $INSTALL_DIR/bin" >&2
@@ -53,22 +135,103 @@ if [[ ! -d "$INSTALL_DIR/bin" ]]; then
   exit 1
 fi
 
-# Create staging directory
+# Create staging directory with FHS-compliant structure
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR"
 
-# Copy bin/ directory
-echo "Copying binaries..."
-cp -r "$INSTALL_DIR/bin" "$STAGING_DIR/$PACKAGE_DIR/"
+# Organize binaries by type (following mgoltzsche pattern)
+# usr/local/bin/ = user-facing tools
+# usr/local/lib/podman/ = runtime helpers
+echo "Organizing binaries..."
+mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin"
+mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman"
 
-# Create lib/ directory (for future use)
-mkdir -p "$STAGING_DIR/$PACKAGE_DIR/lib/$TOOL"
+# Define which binaries go where
+BIN_TOOLS="podman crun runc fuse-overlayfs fusermount3 pasta pasta.avx2 buildah skopeo"
+LIB_HELPERS="conmon netavark aardvark-dns catatonit rootlessport"
+
+# Copy user-facing tools to bin/
+for binary in $BIN_TOOLS; do
+  if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
+    echo "  → usr/local/bin/$binary"
+    cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin/"
+  fi
+done
+
+# Copy runtime helpers to lib/podman/
+for binary in $LIB_HELPERS; do
+  if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
+    echo "  → usr/local/lib/podman/$binary"
+    cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
+  fi
+done
+
+# Also check lib/podman/ source directory (for rootlessport, etc.)
+if [[ -d "$INSTALL_DIR/lib/podman" ]]; then
+  for binary in "$INSTALL_DIR/lib/podman"/*; do
+    if [[ -f "$binary" ]]; then
+      binary_name=$(basename "$binary")
+      echo "  → usr/local/lib/podman/$binary_name"
+      cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
+    fi
+  done
+fi
+
+# Also check libexec/podman/ source directory (for quadlet)
+if [[ -d "$INSTALL_DIR/libexec/podman" ]]; then
+  mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman"
+  for binary in "$INSTALL_DIR/libexec/podman"/*; do
+    if [[ -f "$binary" ]]; then
+      binary_name=$(basename "$binary")
+      echo "  → usr/local/libexec/podman/$binary_name"
+      cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman/"
+    fi
+  done
+fi
 
 # Copy etc/ directory with default configs
-echo "Copying configuration files..."
+echo "Copying configuration files to etc/containers/..."
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR/etc/containers"
 cp "$PROJECT_ROOT/etc/containers/policy.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
 cp "$PROJECT_ROOT/etc/containers/registries.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+cp "$PROJECT_ROOT/etc/containers/containers.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+cp "$PROJECT_ROOT/etc/containers/storage.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+cp "$PROJECT_ROOT/etc/containers/seccomp.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+
+# Copy systemd files (for podman only)
+if [[ "$TOOL" == "podman" ]]; then
+  # Copy systemd service/socket files
+  if [[ -d "$CONFIG_DIR/systemd" ]]; then
+    echo "Copying systemd integration files..."
+    mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/system"
+    mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/user"
+
+    if [[ -d "$CONFIG_DIR/systemd/system" ]]; then
+      cp "$CONFIG_DIR/systemd/system/"* "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/system/" 2>/dev/null || true
+    fi
+
+    if [[ -d "$CONFIG_DIR/systemd/user" ]]; then
+      cp "$CONFIG_DIR/systemd/user/"* "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/user/" 2>/dev/null || true
+    fi
+  fi
+
+  # Create systemd generator symlinks (for quadlet)
+  if [[ -f "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman/quadlet" ]]; then
+    echo "Creating systemd generator symlinks..."
+    mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/system-generators"
+    mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/user-generators"
+
+    # Create relative symlinks to quadlet
+    cd "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/system-generators"
+    ln -s ../../../libexec/podman/quadlet podman-system-generator
+
+    cd "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/systemd/user-generators"
+    ln -s ../../../libexec/podman/quadlet podman-user-generator
+
+    cd "$PROJECT_ROOT"
+    echo "✓ Created systemd generators"
+  fi
+fi
 
 # Create README for the package
 cat > "$STAGING_DIR/$PACKAGE_DIR/README.txt" <<EOF
@@ -85,13 +248,13 @@ Installation
 1. Extract this archive:
    tar -xf ${TARBALL_NAME}.tar.zst
 
-2. Add to PATH or copy to system location:
-   export PATH=\$PWD/$PACKAGE_DIR/bin:\$PATH
+2. Install to system (recommended):
+   cd $PACKAGE_DIR
+   sudo cp -r usr/* /usr/
+   sudo cp -r etc/* /etc/
 
-   OR
-
-   sudo cp -r $PACKAGE_DIR/bin/* /usr/local/bin/
-   sudo cp -r $PACKAGE_DIR/etc/* /etc/
+   OR add to PATH (user install):
+   export PATH=\$PWD/$PACKAGE_DIR/usr/local/bin:\$PATH
 
 3. Verify installation:
    $TOOL --version
@@ -131,7 +294,7 @@ All binaries are statically linked with:
 - musl libc (no glibc dependencies)
 - mimalloc allocator (high performance)
 
-Verify with: ldd bin/$TOOL
+Verify with: ldd usr/local/bin/$TOOL
 Expected output: "not a dynamic executable"
 
 Contents
@@ -139,12 +302,26 @@ Contents
 
 EOF
 
-# List all binaries
-echo "bin/" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
-ls -1 "$STAGING_DIR/$PACKAGE_DIR/bin/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+# List all binaries organized by location
+if [[ -d "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin" ]] && [[ -n "$(ls -A "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin" 2>/dev/null)" ]]; then
+  echo "usr/local/bin/ (user-facing tools):" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  ls -1 "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  echo "" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+fi
 
-echo "" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
-echo "etc/containers/" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+if [[ -d "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman" ]] && [[ -n "$(ls -A "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman" 2>/dev/null)" ]]; then
+  echo "usr/local/lib/podman/ (runtime helpers):" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  ls -1 "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  echo "" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+fi
+
+if [[ -d "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman" ]] && [[ -n "$(ls -A "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman" 2>/dev/null)" ]]; then
+  echo "usr/local/libexec/podman/ (systemd integration):" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  ls -1 "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+  echo "" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+fi
+
+echo "etc/containers/ (configuration):" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
 ls -1 "$STAGING_DIR/$PACKAGE_DIR/etc/containers/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
 
 # Create tarball with zstd compression

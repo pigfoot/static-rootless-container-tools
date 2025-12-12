@@ -80,7 +80,7 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 
 ### Functional Requirements
 
-- **FR-001**: System MUST produce statically linked binaries that run without external library dependencies
+- **FR-001**: System MUST produce statically linked binaries that run without external library dependencies (verified via `ldd` showing "not a dynamic executable")
 - **FR-002**: System MUST build binaries for linux/amd64 and linux/arm64 architectures
 - **FR-003**: System MUST track and release podman, buildah, and skopeo independently based on their upstream versions
 - **FR-004**: System MUST check for new upstream versions daily at a scheduled time
@@ -92,15 +92,24 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - **FR-010**: System MUST check GitHub Releases to track which versions have been released to avoid duplicate builds
 - **FR-011**: System MUST fail the entire release if any architecture build fails (no partial releases)
 
+### Non-Functional Requirements
+
+- **NFR-001**: Podman-full package SHOULD NOT exceed 100MB total size (current: ~72MB for 8 components)
+- **NFR-002**: Individual binary sizes SHOULD remain under 50MB (largest: podman at 44MB)
+
 ### Podman Full Package Components
 
-- **crun**: Container runtime (OCI-compliant)
-- **conmon**: Container monitor process
-- **fuse-overlayfs**: Rootless overlay filesystem
-- **netavark**: Container networking
-- **aardvark-dns**: DNS server for container networks
-- **pasta**: Rootless networking (slirp4netns alternative)
-- **catatonit**: Minimal init process for containers
+**Current Build Status (as of 2025-12-14)**: 8/8 components successfully building (100%) ✅
+
+**✅ All Components Building Successfully**:
+- **podman**: Main container management tool (44M, static)
+- **conmon**: Container monitor process (2.0M, static) ✅ Fixed with libglib2.0-dev
+- **crun**: OCI runtime (3.6M, static) ✅ Fixed with libcap-dev + libseccomp source build
+- **netavark**: Container networking (14M, static) ✅ Fixed with Rust musl target
+- **aardvark-dns**: DNS server for container networks (3.5M, static) ✅ Fixed with Rust musl target
+- **pasta**: Rootless networking (1.3M + 1.3M AVX2, static) ✅ Fixed with Clang migration
+- **fuse-overlayfs**: Rootless overlay filesystem (1.3M, static) ✅ Fixed with libfuse manual install
+- **catatonit**: Minimal init process for containers (847K, static)
 
 ### Key Entities
 
@@ -115,7 +124,7 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - Upstream repositories (containers/podman, containers/buildah, containers/skopeo) follow semantic versioning
 - GitHub Actions has sufficient runner time for multi-architecture builds
 - Sigstore/cosign keyless signing remains available and free for open source projects
-- Alpine Linux packages provide compatible versions of runtime components for podman-full
+- Critical runtime components (libseccomp, libfuse) are built from source for reproducibility and compatibility (see [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md))
 
 ## Success Criteria *(mandatory)*
 
@@ -125,5 +134,5 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - **SC-002**: New upstream stable releases result in corresponding GitHub Releases within 24 hours
 - **SC-003**: All release artifacts pass checksum verification (100% integrity)
 - **SC-004**: All release artifacts pass cosign signature verification (100% authenticity)
-- **SC-005**: Build-to-release time for a single tool is under 30 minutes per architecture (includes compilation, packaging, signing, and upload)
+- **SC-005**: Build-to-release time for a single tool is under 30 minutes **per architecture** (includes compilation, packaging, signing, and upload for one architecture; total pipeline may run architectures in parallel)
 - **SC-006**: Users can download and run a tool in under 5 minutes (download, extract, execute)

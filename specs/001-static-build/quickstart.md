@@ -37,8 +37,13 @@
    # Extract to current directory
    tar -xf podman-full-linux-amd64.tar.zst
 
-   # Or extract directly to /usr/local (requires sudo)
-   sudo tar -xf podman-full-linux-amd64.tar.zst -C /usr/local --strip-components=1
+   # Install to system (recommended)
+   cd podman-v5.3.1
+   sudo cp -r usr/* /usr/
+   sudo cp -r etc/* /etc/
+
+   # Or add to PATH (user install)
+   export PATH=$PWD/podman-v5.3.1/usr/local/bin:$PATH
    ```
 
 5. **Verify installation:**
@@ -132,10 +137,10 @@ gh workflow run build-podman.yml -f version=5.3.1
 
 ### "command not found" after extraction
 
-Ensure the `bin/` directory is in your PATH:
+Ensure the `usr/local/bin/` directory is in your PATH:
 
 ```bash
-export PATH="$PWD/podman-v5.3.1/bin:$PATH"
+export PATH="$PWD/podman-v5.3.1/usr/local/bin:$PATH"
 ```
 
 ### Permission denied
@@ -143,7 +148,7 @@ export PATH="$PWD/podman-v5.3.1/bin:$PATH"
 The binaries should be executable. If not:
 
 ```bash
-chmod +x podman-v5.3.1/bin/*
+chmod +x podman-v5.3.1/usr/local/bin/*
 ```
 
 ### Missing fuse-overlayfs
@@ -152,7 +157,7 @@ For rootless containers, ensure `fuse-overlayfs` is available:
 
 ```bash
 # It's included in podman-full
-ls podman-v5.3.1/bin/fuse-overlayfs
+ls podman-v5.3.1/usr/local/bin/fuse-overlayfs
 ```
 
 ### Verification fails
