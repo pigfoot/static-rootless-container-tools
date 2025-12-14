@@ -45,13 +45,38 @@ permissions:
   id-token: write  # Required for cosign OIDC
 
 jobs:
+  validate:
+    name: Validate version
+    runs-on: ubuntu-latest
+    steps:
+      - name: Validate semver pattern
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          # Semver pattern: v1.2.3 or v1.2 or 1.2.3 or 1.2
+          SEMVER_PATTERN='^v?[0-9]+\.[0-9]+(\.[0-9]+)?$'
+
+          if [[ ! "$VERSION" =~ $SEMVER_PATTERN ]]; then
+            echo "Error: Invalid version format '$VERSION'"
+            echo "Expected format: v1.2.3 or v1.2 or 1.2.3 or 1.2"
+            exit 1
+          fi
+
+          echo "✓ Version '$VERSION' is valid"
+
   build:
     name: Build podman-${{ matrix.variant }}-${{ matrix.arch }}
-    runs-on: ubuntu-latest
+    needs: validate
+    runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         arch: [amd64, arm64]
         variant: [full, minimal]
+        include:
+          - arch: amd64
+            runner: ubuntu-24.04
+          - arch: arm64
+            runner: ubuntu-24.04-arm
       fail-fast: false
 
     steps:
@@ -65,6 +90,9 @@ jobs:
 
       - name: Pull container image
         run: podman pull docker.io/ubuntu:rolling
+
+      - name: Create build directory
+        run: mkdir -p build
 
       - name: Run build and package in container
         env:
@@ -100,6 +128,14 @@ jobs:
               exit 1
             fi
           done
+
+      - name: Test podman binary
+        env:
+          ARCH: ${{ matrix.arch }}
+        run: |
+          echo "Testing podman binary on native ${{ matrix.arch }} runner..."
+          ./build/podman-$ARCH/install/bin/podman version
+          echo "✓ podman binary works correctly"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
@@ -159,7 +195,7 @@ jobs:
           **INSTALLATION**
           ```bash
           # Download tarball for your architecture and variant
-          wget https://github.com/${{ github.repository }}/releases/download/podman-${{ inputs.version }}/podman-full-linux-amd64.tar.zst
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/podman-${{ inputs.version }}/podman-full-linux-amd64.tar.zst
 
           # Extract
           tar -xf podman-full-linux-amd64.tar.zst

@@ -48,21 +48,19 @@ if [[ "$TOOL" == "podman" && -z "$VARIANT" ]]; then
   VARIANT="full"
 fi
 
-# Map architecture to musl/Go targets
+# Map architecture to Go arch
 case "$ARCH" in
   amd64)
-    ZIG_TARGET="x86_64-linux-musl"
     GOARCH="amd64"
     ;;
   arm64)
-    ZIG_TARGET="aarch64-linux-musl"
     GOARCH="arm64"
     ;;
 esac
 
 echo "========================================"
 echo "Building: $TOOL"
-echo "Architecture: $ARCH (target: $ZIG_TARGET)"
+echo "Architecture: $ARCH (native build)"
 [[ -n "$VARIANT" ]] && echo "Variant: $VARIANT"
 echo "========================================"
 
@@ -113,6 +111,9 @@ INSTALL_DIR="$BUILD_DIR/install"
 SRC_DIR="$BUILD_DIR/src"
 
 mkdir -p "$BUILD_DIR" "$INSTALL_DIR/bin" "$SRC_DIR"
+
+# Initialize LDFLAGS (will be extended during build)
+LDFLAGS="${LDFLAGS:-}"
 
 # Set upstream repository
 UPSTREAM_REPO="containers/$TOOL"
@@ -210,9 +211,9 @@ else
   fi
 fi
 
-# Setup clang + musl cross-compilation environment
-export CC="clang --target=$ZIG_TARGET"
-export CXX="clang++ --target=$ZIG_TARGET"
+# Setup clang + musl native build environment
+export CC="clang"
+export CXX="clang++"
 export AR="ar"
 export RANLIB="ranlib"
 
@@ -336,7 +337,7 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
       --prefix="$LIBSECCOMP_INSTALL" \
       --enable-static \
       --disable-shared \
-      CC="clang --target=$ZIG_TARGET" \
+      CC="clang" \
       CFLAGS="-O2 -fPIC" || {
       echo "⚠ Warning: configure failed for libseccomp"
     }

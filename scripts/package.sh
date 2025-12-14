@@ -185,6 +185,46 @@ if [[ -d "$INSTALL_DIR/libexec/podman" ]]; then
   done
 fi
 
+# Validate required components for podman-full variant
+if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
+  echo ""
+  echo "Validating required components for podman-full..."
+
+  # Required components for podman-full (from spec.md:100-112)
+  REQUIRED_COMPONENTS=(
+    "usr/local/bin/podman"
+    "usr/local/bin/crun"
+    "usr/local/bin/fuse-overlayfs"
+    "usr/local/bin/pasta"
+    "usr/local/lib/podman/conmon"
+    "usr/local/lib/podman/netavark"
+    "usr/local/lib/podman/aardvark-dns"
+    "usr/local/lib/podman/catatonit"
+  )
+
+  MISSING_COMPONENTS=()
+  for component in "${REQUIRED_COMPONENTS[@]}"; do
+    if [[ ! -f "$STAGING_DIR/$PACKAGE_DIR/$component" ]]; then
+      MISSING_COMPONENTS+=("$component")
+    fi
+  done
+
+  if [[ ${#MISSING_COMPONENTS[@]} -gt 0 ]]; then
+    echo ""
+    echo "❌ ERROR: Missing required components for podman-full:"
+    for missing in "${MISSING_COMPONENTS[@]}"; do
+      echo "  - $missing"
+    done
+    echo ""
+    echo "These components are required by spec.md and MUST be present."
+    echo "Build failures should be fixed, not silently ignored."
+    exit 1
+  fi
+
+  echo "✅ All required components present (8/8)"
+  echo ""
+fi
+
 # Copy etc/ directory with default configs
 echo "Copying configuration files to etc/containers/..."
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR/etc/containers"
@@ -324,7 +364,9 @@ ls -1 "$STAGING_DIR/$PACKAGE_DIR/etc/containers/" | sed 's/^/  /' >> "$STAGING_D
 echo "Creating tarball..."
 cd "$STAGING_DIR"
 
-OUTPUT_TARBALL="$PROJECT_ROOT/${TARBALL_NAME}.tar.zst"
+# Create tarball in build directory (for container volume mount)
+OUTPUT_TARBALL="$PROJECT_ROOT/build/${TARBALL_NAME}.tar.zst"
+mkdir -p "$PROJECT_ROOT/build"
 tar -cf - "$PACKAGE_DIR" | zstd -19 -T0 -o "$OUTPUT_TARBALL"
 
 # Show results

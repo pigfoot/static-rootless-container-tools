@@ -1,18 +1,17 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.1.0 → 1.2.0
-Bump rationale: Migration from Zig to Clang due to compatibility issues (MINOR)
+Version change: 1.2.0 → 1.2.1
+Bump rationale: Adjust daily check schedule from UTC 00:00 to UTC 02:00 (PATCH)
 
 Modified sections:
-  - Principle III (Reproducible Builds): Clarified from "Pin specific versions" to "documented minimum versions"
-  - Build Environment: Updated from Zig to Clang with musl target
-  - Minimum Requirements: Added Clang (musl support), Go 1.21+, protobuf-compiler
+  - Principle V (Automated Release Pipeline): Changed schedule from UTC 00:00 to UTC 02:00
+  - Release Pipeline > Version Detection: Changed schedule from UTC 00:00 to UTC 02:00
 
-Migration rationale:
-  - Zig incompatibility: pasta __cpu_model symbol, fuse-overlayfs meson detection
-  - Clang advantages: GCC built-in support, better ecosystem compatibility
-  - Versions not pinned: Using latest stable versions from distribution packages
+Rationale:
+  - User preference for UTC 02:00 timing
+  - No functional changes to automation logic
+  - Maintains daily check requirement
 
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No changes needed (generic template)
@@ -20,6 +19,14 @@ Templates requiring updates:
   - .specify/templates/tasks-template.md: ✅ No changes needed (generic template)
 
 Follow-up TODOs: None
+
+Previous changes:
+==================
+Version 1.1.0 → 1.2.0 (MINOR)
+- Migration from Zig to Clang due to compatibility issues
+- Updated Principle III (Reproducible Builds): "documented minimum versions"
+- Updated Build Environment: Clang with musl target
+- Updated Minimum Requirements: Clang, Go 1.21+, protobuf-compiler
 -->
 
 # Rootless Static Toolkits Constitution
@@ -76,7 +83,7 @@ Include only components strictly necessary for functionality.
 
 Version detection and releases MUST be fully automated.
 
-- Daily scheduled check (UTC 00:00) for new upstream versions via GitHub API
+- Daily scheduled check (UTC 02:00) for new upstream versions via GitHub API
 - Manual trigger support via workflow_dispatch for on-demand builds
 - Automatic GitHub Release creation with:
   - Tarballs for linux/amd64 and linux/arm64
@@ -123,7 +130,7 @@ Podman additionally provides:
 ### Version Detection
 
 ```
-Schedule: Daily at UTC 00:00
+Schedule: Daily at UTC 02:00
 Method: curl + GitHub API (no authentication required for public repos)
   - Endpoint: https://api.github.com/repos/{org}/{repo}/releases
   - Fallback: https://api.github.com/repos/{org}/{repo}/tags

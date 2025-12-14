@@ -58,7 +58,62 @@ if ! command -v gh &> /dev/null; then
   exit 1
 fi
 
-# Check GitHub API rate limit
+# Function: Fetch GitHub releases with exponential backoff
+# Args: $1 = repository (e.g., "containers/podman")
+# Returns: Release list or exits on failure after retries
+fetch_releases_with_retry() {
+  local repo="$1"
+  local attempt=1
+  local max_attempts=3
+  local delay=1
+
+  while [[ $attempt -le $max_attempts ]]; do
+    echo "  Attempt $attempt/$max_attempts: Fetching releases from $repo" >&2
+
+    # Check rate limit before attempting
+    local rate_limit=$(gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "0")
+    if [[ "$rate_limit" -eq 0 ]]; then
+      echo "  Rate limit exceeded" >&2
+      if [[ $attempt -lt $max_attempts ]]; then
+        echo "  Waiting ${delay}s before retry..." >&2
+        sleep "$delay"
+        delay=$((delay * 2))
+        attempt=$((attempt + 1))
+        continue
+      else
+        echo "Error: GitHub API rate limit exceeded after $max_attempts attempts" >&2
+        exit 1
+      fi
+    fi
+
+    # Attempt to fetch releases
+    local output
+    if output=$(gh release list --repo "$repo" --limit 50 --exclude-drafts 2>&1); then
+      # Success
+      echo "$output"
+      return 0
+    else
+      # Check if error is rate limit related
+      if echo "$output" | grep -qi "rate limit"; then
+        echo "  Rate limit error" >&2
+      else
+        echo "  API error: $output" >&2
+      fi
+
+      if [[ $attempt -lt $max_attempts ]]; then
+        echo "  Waiting ${delay}s before retry..." >&2
+        sleep "$delay"
+        delay=$((delay * 2))
+        attempt=$((attempt + 1))
+      else
+        echo "Error: Failed to fetch releases after $max_attempts attempts" >&2
+        exit 1
+      fi
+    fi
+  done
+}
+
+# Check GitHub API rate limit (initial check)
 echo "Checking GitHub API rate limit..."
 RATE_LIMIT=$(gh api rate_limit --jq '.rate.remaining' 2>/dev/null || echo "unknown")
 if [[ "$RATE_LIMIT" != "unknown" && "$RATE_LIMIT" -lt 10 ]]; then
@@ -68,34 +123,42 @@ if [[ "$RATE_LIMIT" != "unknown" && "$RATE_LIMIT" -lt 10 ]]; then
     echo "Warning: GitHub API rate limit low ($RATE_LIMIT remaining)" >&2
     echo "Rate limit resets at: $RESET_DATE" >&2
   fi
-  if [[ "$RATE_LIMIT" -eq 0 ]]; then
-    echo "Error: GitHub API rate limit exceeded" >&2
-    exit 1
-  fi
 fi
+
+# Semver pattern: v1.2.3 or v1.2 or 1.2.3 or 1.2
+SEMVER_PATTERN='^v?[0-9]+\.[0-9]+(\.[0-9]+)?$'
 
 # Get latest upstream version (excluding pre-releases)
 echo "Fetching latest upstream version..."
-UPSTREAM_VERSION=$(gh release list \
-  --repo "$UPSTREAM_REPO" \
-  --limit 50 \
-  --exclude-drafts \
-  --exclude-pre-releases \
-  2>&1 | tee /tmp/gh_output.txt \
-  | grep -v -E '(alpha|beta|rc|RC|HTTP)' \
-  | head -1 \
-  | awk '{print $1}')
+UPSTREAM_VERSION=""
 
-# Check if rate limited
-if grep -qi "rate limit" /tmp/gh_output.txt 2>/dev/null; then
-  echo "Error: GitHub API rate limit exceeded while fetching releases" >&2
-  rm -f /tmp/gh_output.txt
-  exit 1
-fi
-rm -f /tmp/gh_output.txt
+# Fetch releases with retry and filter by semver pattern
+RELEASES_OUTPUT=$(fetch_releases_with_retry "$UPSTREAM_REPO")
+
+while IFS=$'\t' read -r version rest; do
+  # Skip empty lines
+  [[ -z "$version" ]] && continue
+
+  # Skip pre-releases (alpha, beta, rc, etc.)
+  if [[ "$version" =~ (alpha|beta|rc|RC|dev|pre|snapshot) ]]; then
+    echo "  Skipping pre-release: $version" >&2
+    continue
+  fi
+
+  # Validate semver pattern
+  if [[ ! "$version" =~ $SEMVER_PATTERN ]]; then
+    echo "  Skipping invalid semver: $version" >&2
+    continue
+  fi
+
+  # First valid version is the latest
+  UPSTREAM_VERSION="$version"
+  echo "  Latest stable version: $UPSTREAM_VERSION" >&2
+  break
+done < <(echo "$RELEASES_OUTPUT")
 
 if [[ -z "$UPSTREAM_VERSION" ]]; then
-  echo "Error: Could not fetch upstream version" >&2
+  echo "Error: Could not find valid upstream version" >&2
   exit 1
 fi
 

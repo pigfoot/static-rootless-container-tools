@@ -87,9 +87,9 @@ Download a release and verify:
 
 ```bash
 # Download artifacts
-wget https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst
-wget https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst.sig
-wget https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/checksums.txt
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst.sig
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/checksums.txt
 ```
 
 - [ ] Checksum verification passes:

@@ -1,44 +1,89 @@
 # Rootless Static Toolkits
 
+[![Build Podman](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-podman.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-podman.yml)
+[![Build Buildah](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-buildah.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-buildah.yml)
+[![Build Skopeo](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-skopeo.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-skopeo.yml)
+[![Check New Releases](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/check-releases.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/check-releases.yml)
+
 Build truly static binaries for **podman**, **buildah**, and **skopeo** targeting `linux/amd64` and `linux/arm64`.
 
 ## Features
 
-- **Truly Static Binaries**: Built with musl libc + mimalloc, runs on any Linux distribution
-- **Cross-Architecture**: Supports amd64 and arm64 via Zig cross-compilation
+- **Truly Static Binaries**: Built with musl libc + mimalloc in containerized Ubuntu:rolling, runs on any Linux distribution
+- **Cross-Architecture**: Supports amd64 and arm64 via Clang cross-compilation with musl target
 - **Independent Releases**: Each tool released separately when upstream updates
-- **Automated Pipeline**: Daily upstream version checks with GitHub Actions
-- **Verified Downloads**: SHA256 checksums + Sigstore/cosign signatures
+- **Automated Pipeline**: Daily upstream version checks (2 AM UTC) with GitHub Actions
+- **Verified Downloads**: SHA256 checksums + Sigstore/cosign keyless OIDC signatures
 
 ## Quick Start
 
-### Download Pre-built Binaries
+### Download Latest Version (Auto-detect)
 
 ```bash
-# Download latest podman-full for linux/amd64
-wget https://github.com/YOUR_USERNAME/rootless-static-toolkits/releases/download/podman-vX.Y.Z/podman-full-linux-amd64.tar.zst
+# Set repository and architecture
+REPO="pigfoot/rootless-static-toolkits"
+ARCH=$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "amd64")
+
+# Download latest podman-full
+TOOL="podman"; VARIANT="-full"
+TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
+  sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+  zstd -d | tar xvf -
+
+# Download latest buildah
+TOOL="buildah"; VARIANT=""
+TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
+  sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+  zstd -d | tar xvf -
+
+# Download latest skopeo
+TOOL="skopeo"; VARIANT=""
+TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
+  sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+  zstd -d | tar xvf -
+```
+
+### Download Specific Version
+
+Check [Releases](https://github.com/pigfoot/rootless-static-toolkits/releases) for all available versions.
+
+```bash
+# Example: Download podman-full v5.7.1 for linux/amd64
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-full-linux-amd64.tar.zst
 
 # Extract
-tar -xf podman-full-linux-amd64.tar.zst
+zstd -d podman-full-linux-amd64.tar.zst && tar -xf podman-full-linux-amd64.tar
+cd podman-v5.7.1
 
-# Run
-cd podman-vX.Y.Z/bin
-./podman --version
+# Install system-wide
+sudo cp -r usr/* /usr/
+sudo cp -r etc/* /etc/
+
+# Or use from current directory
+export PATH=$PWD/usr/local/bin:$PATH
+podman --version
 ```
 
 ### Verify Authenticity
 
+All releases include SHA256 checksums and cosign signatures (keyless OIDC).
+
 ```bash
+# Download checksums file
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/checksums.txt
+
 # Verify SHA256 checksum
-wget https://github.com/YOUR_USERNAME/rootless-static-toolkits/releases/download/podman-vX.Y.Z/checksums.txt
 sha256sum -c checksums.txt --ignore-missing
 
 # Verify cosign signature (requires cosign CLI)
-wget https://github.com/YOUR_USERNAME/rootless-static-toolkits/releases/download/podman-vX.Y.Z/podman-full-linux-amd64.tar.zst.sig
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-full-linux-amd64.tar.zst.bundle
 cosign verify-blob \
-  --signature podman-full-linux-amd64.tar.zst.sig \
-  --certificate-identity-regexp 'https://github.com/YOUR_USERNAME/rootless-static-toolkits' \
-  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --bundle=podman-full-linux-amd64.tar.zst.bundle \
+  --certificate-identity-regexp='https://github.com/.*' \
+  --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
   podman-full-linux-amd64.tar.zst
 ```
 
@@ -61,42 +106,59 @@ Single binary for image operations.
 
 ### Prerequisites
 
-- Zig 0.11+
+- podman or docker (for containerized builds)
+- cosign (optional, for signing)
+- gh CLI (optional, for automated releases)
+
+All builds run inside Ubuntu:rolling containers with:
+- Clang + musl-dev + musl-tools
 - Go 1.21+
-- cosign
-- gh CLI (authenticated)
+- Rust (for netavark/aardvark-dns)
+- protobuf-compiler
+
+### Containerized Build
 
 ```bash
-# Install dependencies
-make install-deps
-
-# Build specific tool
+# Build podman-full for amd64 (runs inside container)
 make build-podman
 
-# Run tests
-make test
+# Or manually trigger workflow
+gh workflow run build-podman.yml \
+  -f version=v5.3.1 \
+  -f architecture=amd64 \
+  -f variant=full
 ```
 
 ### Manual Build
 
 ```bash
-# Build podman for current architecture
-./scripts/build-tool.sh podman
+# Setup build environment (inside container)
+podman run --rm -it \
+  -v ./scripts:/workspace/scripts:ro,z \
+  -v ./build:/workspace/build:rw,z \
+  docker.io/ubuntu:rolling bash
 
-# Package tarball
-./scripts/package.sh podman v5.3.1 full
+# Inside container:
+/workspace/scripts/container/setup-build-env.sh
+/workspace/scripts/build-tool.sh podman amd64 full
+/workspace/scripts/package.sh podman v5.3.1 amd64 full
+```
 
-# Sign with cosign
-./scripts/sign-release.sh podman-full-linux-amd64.tar.zst
+### Local Signing
+
+```bash
+# Sign all tarballs in release directory
+./scripts/sign-release.sh ./release/
 ```
 
 ## Architecture
 
 ### Build Strategy
 
-1. **Primary**: Zig cross-compiler with musl target
-2. **Fallback**: Alpine Linux container with musl-based GCC
+1. **Containerized**: Ubuntu:rolling with Clang + musl-dev for reproducible builds
+2. **Cross-Compilation**: Clang with `--target=<arch>-linux-musl` for amd64/arm64
 3. **Allocator**: mimalloc (statically linked, 7-10x faster than musl default)
+4. **Dependencies**: All dependencies built from source (libseccomp, libfuse, etc.)
 
 ### Release Pipeline
 
