@@ -142,8 +142,8 @@
 **Purpose**: Improvements that affect multiple user stories, quality assurance, documentation
 
 - [ ] T054 [P] Add workflow failure notifications - Configure GitHub Actions to create issue on build failure with logs (DEFERRED: Requires actual workflow failures to test)
-- [ ] T055 [P] Add build time monitoring - Track build duration per tool/architecture, ensure < 30 minutes (NFR SC-005) (DEFERRED: Requires actual builds to verify)
-- [ ] T056 [P] Add artifact size validation - Verify podman-full < 100MB (NFR-001), individual binaries < 50MB (NFR-002) (DEFERRED: Requires actual builds to verify)
+- [X] T055 [P] Add build time monitoring - Track build duration per tool/architecture, ensure < 30 minutes (NFR SC-005)
+- [X] T056 [P] Add artifact size validation - Verify podman-full < 100MB (NFR-001), individual binaries < 50MB (NFR-002)
 - [X] T056b [P] Validate FR-008 3-variant packaging - Verify all tools produce exactly 3 variants (standalone/default/full) with correct components per variant; default variant uses simplified naming
 - [ ] T057 End-to-end validation on real distributions - Test downloads on Alpine, Ubuntu, CentOS; verify static binaries run (SC-001) (DEFERRED: Requires actual releases and real systems)
 - [X] T058 Update quickstart.md with real release URLs - Replace placeholders with actual repository path
