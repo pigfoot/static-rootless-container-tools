@@ -35,7 +35,7 @@
 - [X] T007 Implement scripts/container/setup-build-env.sh - Install clang, musl-dev, musl-tools, go, rust, protobuf-compiler inside Ubuntu container
 - [X] T008 [P] Implement scripts/container/run-build.sh - Wrapper to launch podman container with volume mounts and environment variables
 - [X] T009 Migrate scripts/build-tool.sh to containerized approach - Remove runner-native dependencies, add container-specific logic for mimalloc build, Go/Rust/C component builds with Clang + musl
-- [X] T010 [P] Migrate scripts/package.sh to run inside container - Create tarball structure with bin/, lib/, libexec/, etc/ directories from /workspace/build output, support full/minimal variants
+- [X] T010 [P] Migrate scripts/package.sh to run inside container - Create tarball structure with bin/, lib/, libexec/, etc/ directories from /workspace/build output, support standalone/default/full variants
 - [X] T011 Implement libseccomp v2.5.5 source build in scripts/build-tool.sh for crun static linking
 - [X] T012 [P] Implement libfuse manual build in scripts/build-tool.sh with libfuse_config.h for fuse-overlayfs
 - [X] T013 Add Rust musl target support for netavark/aardvark-dns builds
@@ -63,8 +63,9 @@
 - [X] T022 [US1] Add static linking verification step - Run `ldd` on all binaries, ensure output shows "not a dynamic executable"
 - [X] T023 [US1] Add GitHub Release creation step - Create release with tag `{tool}-v{version}`, upload tarballs for amd64 and arm64
 - [X] T024 [US1] Test podman-full build end-to-end - Trigger workflow, verify all 8 components (podman, crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit) in tarball
-- [X] T025 [US1] Test podman-minimal build - Verify only podman binary included
-- [X] T026 [US1] Test buildah and skopeo builds - Verify single binary per tool
+- [X] T025 [US1] Test podman-default build - Verify podman + crun + conmon + configs included
+- [X] T025b [US1] Test podman-standalone build - Verify only podman binary included
+- [X] T026 [US1] Test buildah and skopeo builds - Verify all 3 variants (standalone/default/full) per tool
 
 **Checkpoint**: At this point, users can download static binaries from GitHub Releases and run them on any Linux distribution
 
@@ -123,13 +124,13 @@
 
 ### Implementation for User Story 4
 
-- [X] T046 [P] [US4] Add workflow_dispatch trigger to build-podman.yml with inputs (version, architecture [amd64/arm64/both], variant [full/minimal/both])
-- [X] T047 [P] [US4] Add workflow_dispatch trigger to build-buildah.yml with inputs (version, architecture)
-- [X] T048 [P] [US4] Add workflow_dispatch trigger to build-skopeo.yml with inputs (version, architecture)
+- [X] T046 [P] [US4] Add workflow_dispatch trigger to build-podman.yml with inputs (version, architecture [amd64/arm64/both], variant [standalone/default/full/all])
+- [X] T047 [P] [US4] Add workflow_dispatch trigger to build-buildah.yml with inputs (version, architecture, variant [standalone/default/full/all])
+- [X] T048 [P] [US4] Add workflow_dispatch trigger to build-skopeo.yml with inputs (version, architecture, variant [standalone/default/full/all])
 - [X] T049 [US4] Add version validation in workflows - Ensure version follows semver pattern before proceeding
 - [X] T050 [US4] Add existing release handling - Check if release exists, update assets instead of creating duplicate
 - [X] T051 [US4] Test manual trigger via GitHub UI - Navigate to Actions tab, select workflow, click "Run workflow", specify parameters
-- [X] T052 [US4] Test manual trigger via gh CLI - Run `gh workflow run build-podman.yml -f version=5.3.0 -f architecture=amd64 -f variant=full`
+- [X] T052 [US4] Test manual trigger via gh CLI - Run `gh workflow run build-podman.yml -f version=5.3.0 -f architecture=amd64 -f variant=default`
 - [X] T053 [US4] Test rebuild scenario - Trigger build for already-released version, verify assets are updated not duplicated
 
 **Checkpoint**: All user stories complete - maintainers can manually trigger builds with full control over version/architecture/variant
@@ -143,6 +144,7 @@
 - [ ] T054 [P] Add workflow failure notifications - Configure GitHub Actions to create issue on build failure with logs (DEFERRED: Requires actual workflow failures to test)
 - [ ] T055 [P] Add build time monitoring - Track build duration per tool/architecture, ensure < 30 minutes (NFR SC-005) (DEFERRED: Requires actual builds to verify)
 - [ ] T056 [P] Add artifact size validation - Verify podman-full < 100MB (NFR-001), individual binaries < 50MB (NFR-002) (DEFERRED: Requires actual builds to verify)
+- [X] T056b [P] Validate FR-008 3-variant packaging - Verify all tools produce exactly 3 variants (standalone/default/full) with correct components per variant; default variant uses simplified naming
 - [ ] T057 End-to-end validation on real distributions - Test downloads on Alpine, Ubuntu, CentOS; verify static binaries run (SC-001) (DEFERRED: Requires actual releases and real systems)
 - [X] T058 Update quickstart.md with real release URLs - Replace placeholders with actual repository path
 - [X] T059 [P] Add MIGRATION-ZIG-TO-CLANG.md to feature directory if not exists - Document: (1) Zig issues (pasta __cpu_model, fuse-overlayfs meson), (2) Clang solution, (3) Build time impact, (4) 8/8 components success proof, (5) Containerization benefits

@@ -20,7 +20,7 @@ name: string              # "podman" | "buildah" | "skopeo"
 upstreamRepo: string      # GitHub repo path (e.g., "containers/podman")
 latestVersion: Version    # Latest detected upstream version
 lastChecked: timestamp    # Last time upstream was checked
-variants: Variant[]       # Build variants (e.g., podman has "full" and "minimal")
+variants: Variant[]       # Build variants (all tools have "standalone", "default", "full")
 ```
 
 **Validation Rules**:
@@ -30,8 +30,9 @@ variants: Variant[]       # Build variants (e.g., podman has "full" and "minimal
 - `lastChecked` MUST NOT be older than 25 hours (daily check requirement)
 
 **Invariants**:
-- Only podman has multiple variants (full, minimal)
-- buildah and skopeo have single variant (default)
+- All tools provide 3 variants (standalone, default, full)
+- Default variant recommended for most users (includes minimum required runtime)
+- Skopeo variants are functionally identical (skopeo doesn't run containers)
 
 **Example**:
 ```yaml
@@ -40,10 +41,12 @@ upstreamRepo: containers/podman
 latestVersion: v5.3.1
 lastChecked: 2025-12-14T00:00:00Z
 variants:
+  - name: standalone
+    components: [podman]
+  - name: default
+    components: [podman, crun, conmon]
   - name: full
     components: [podman, crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit]
-  - name: minimal
-    components: [podman]
 ```
 
 ---
@@ -94,7 +97,7 @@ Represents a single GitHub Actions workflow execution for building a tool varian
 id: string                # GitHub Actions run ID
 tool: Tool               # Reference to Tool entity
 version: Version         # Version being built
-variant: string          # Variant name (e.g., "full", "minimal")
+variant: string          # Variant name ("standalone" | "default" | "full")
 architecture: string     # "amd64" | "arm64"
 status: BuildStatus      # Current build status
 triggeredBy: string      # "schedule" | "workflow_dispatch" | "manual"
@@ -233,7 +236,7 @@ checksumFile: Artifact? # Consolidated checksums.txt
 - `status` MUST follow state machine (see below)
 - ALL buildJobs MUST have status="completed" before publishing
 - MUST have artifacts for both amd64 and arm64 (FR-011: no partial releases)
-- podman releases MUST have artifacts for both "full" and "minimal" variants
+- All tool releases MUST have artifacts for all 3 variants (standalone, default, full) and both architectures
 
 **State Machine**:
 ```
@@ -260,16 +263,12 @@ checksumFile: Artifact? # Consolidated checksums.txt
 ```python
 def is_release_complete(release: Release) -> bool:
     required_architectures = ["amd64", "arm64"]
+    required_variants = ["standalone", "default", "full"]
 
-    if release.tool == "podman":
-        required_variants = ["full", "minimal"]
-        for arch in required_architectures:
-            for variant in required_variants:
-                if not has_artifact(release, arch, variant):
-                    return False
-    else:  # buildah, skopeo
-        for arch in required_architectures:
-            if not has_artifact(release, arch, None):
+    # All tools must have all 3 variants for both architectures
+    for arch in required_architectures:
+        for variant in required_variants:
+            if not has_artifact(release, arch, variant):
                 return False
 
     return has_checksums(release) and all_signed(release)
@@ -284,15 +283,19 @@ tag: podman-v5.3.1
 status: building
 createdAt: 2025-12-14T00:10:00Z
 artifacts:
+  - podman-linux-amd64.tar.zst           # default variant (simplified name)
+  - podman-linux-arm64.tar.zst           # default variant (simplified name)
+  - podman-standalone-linux-amd64.tar.zst
+  - podman-standalone-linux-arm64.tar.zst
   - podman-full-linux-amd64.tar.zst
   - podman-full-linux-arm64.tar.zst
-  - podman-minimal-linux-amd64.tar.zst
-  - podman-minimal-linux-arm64.tar.zst
 buildJobs:
+  - [amd64, standalone]
+  - [amd64, default]
   - [amd64, full]
-  - [amd64, minimal]
+  - [arm64, standalone]
+  - [arm64, default]
   - [arm64, full]
-  - [arm64, minimal]
 ```
 
 ---
@@ -463,11 +466,13 @@ Logs uploaded as GitHub Actions artifact
    ↓
 5. Create Release (status=pending)
    ↓
-6. Queue BuildJobs:
+6. Queue BuildJobs (3 variants × 2 architectures = 6 jobs):
+   - podman/amd64/standalone
+   - podman/amd64/default
    - podman/amd64/full
-   - podman/amd64/minimal
+   - podman/arm64/standalone
+   - podman/arm64/default
    - podman/arm64/full
-   - podman/arm64/minimal
    ↓
 7. For each BuildJob:
    a. Create Container (docker.io/ubuntu:rolling)
@@ -511,7 +516,7 @@ Logs uploaded as GitHub Actions artifact
 
 From NFR-001 and NFR-002:
 
-- **Podman-full package**: SHOULD NOT exceed 100MB total (currently ~72MB)
+- **Podman-full package**: SHOULD NOT exceed 100MB total (currently ~74MB)
 - **Individual binaries**: SHOULD remain under 50MB (podman at 44MB is largest)
 
 **Monitoring**:

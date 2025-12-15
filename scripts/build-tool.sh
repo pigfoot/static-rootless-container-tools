@@ -2,6 +2,8 @@
 # Build static container tools with clang + musl
 # Usage: ./scripts/build-tool.sh <tool> [arch] [variant]
 # Example: ./scripts/build-tool.sh podman amd64 full
+#          ./scripts/build-tool.sh podman amd64 default
+#          ./scripts/build-tool.sh podman amd64 standalone
 #          ./scripts/build-tool.sh buildah arm64
 #          ./scripts/build-tool.sh skopeo
 
@@ -17,7 +19,7 @@ VARIANT="${3:-}"
 
 if [[ -z "$TOOL" ]]; then
   echo "Error: Tool name required" >&2
-  echo "Usage: $0 <podman|buildah|skopeo> [amd64|arm64] [full|minimal]" >&2
+  echo "Usage: $0 <podman|buildah|skopeo> [amd64|arm64] [standalone|default|full]" >&2
   exit 1
 fi
 
@@ -43,10 +45,21 @@ case "$ARCH" in
     ;;
 esac
 
-# Set variant for podman (default: full)
-if [[ "$TOOL" == "podman" && -z "$VARIANT" ]]; then
-  VARIANT="full"
+# Set variant (default: "default" for all tools)
+if [[ -z "$VARIANT" ]]; then
+  VARIANT="default"
 fi
+
+# Validate variant
+case "$VARIANT" in
+  standalone|default|full)
+    ;;
+  *)
+    echo "Error: Unsupported variant: $VARIANT" >&2
+    echo "Supported: standalone (binary only), default (+ crun/conmon), full (all components)" >&2
+    exit 1
+    ;;
+esac
 
 # Map architecture to Go arch
 case "$ARCH" in
@@ -83,25 +96,33 @@ if ! command -v curl &> /dev/null; then
 fi
 
 # Optional dependencies (warnings only)
-if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
-  # Check for protoc (needed for Rust components like netavark)
-  if ! command -v protoc &> /dev/null; then
-    echo "Warning: protoc not found. Rust components (netavark) may fail to build." >&2
-    echo "  Install with: apt-get install protobuf-compiler (Debian/Ubuntu)" >&2
-    echo "               emerge dev-libs/protobuf (Gentoo)" >&2
+# Check for dependencies needed by default and full variants
+if [[ "$VARIANT" != "standalone" ]]; then
+  # Check for autoconf/automake (needed for libseccomp source build for crun)
+  if [[ "$TOOL" == "podman" || "$TOOL" == "buildah" ]]; then
+    if ! command -v autoconf &> /dev/null || ! command -v automake &> /dev/null; then
+      echo "Warning: autoconf/automake not found. libseccomp source build may fail (crun will fail)." >&2
+      echo "  Install with: apt-get install autoconf automake libtool (Debian/Ubuntu)" >&2
+      echo "               emerge sys-devel/autoconf sys-devel/automake (Gentoo)" >&2
+    fi
   fi
+fi
 
-  # Check for Rust/Cargo (needed for netavark, aardvark-dns)
-  if ! command -v cargo &> /dev/null; then
-    echo "Warning: cargo not found. Rust components will be skipped." >&2
-    echo "  Install Rust from: https://rustup.rs/" >&2
-  fi
+# Check for dependencies only needed by full variant
+if [[ "$VARIANT" == "full" ]]; then
+  if [[ "$TOOL" == "podman" ]]; then
+    # Check for protoc (needed for Rust components like netavark)
+    if ! command -v protoc &> /dev/null; then
+      echo "Warning: protoc not found. Rust components (netavark) may fail to build." >&2
+      echo "  Install with: apt-get install protobuf-compiler (Debian/Ubuntu)" >&2
+      echo "               emerge dev-libs/protobuf (Gentoo)" >&2
+    fi
 
-  # Check for autoconf/automake (needed for libseccomp source build)
-  if ! command -v autoconf &> /dev/null || ! command -v automake &> /dev/null; then
-    echo "Warning: autoconf/automake not found. libseccomp source build may fail (crun will fail)." >&2
-    echo "  Install with: apt-get install autoconf automake libtool (Debian/Ubuntu)" >&2
-    echo "               emerge sys-devel/autoconf sys-devel/automake (Gentoo)" >&2
+    # Check for Rust/Cargo (needed for netavark, aardvark-dns)
+    if ! command -v cargo &> /dev/null; then
+      echo "Warning: cargo not found. Rust components will be skipped." >&2
+      echo "  Install Rust from: https://rustup.rs/" >&2
+    fi
   fi
 fi
 
@@ -121,20 +142,35 @@ UPSTREAM_REPO="containers/$TOOL"
 # Get version (from env or fetch latest)
 if [[ -z "${VERSION:-}" ]]; then
   echo "Fetching latest $TOOL version from GitHub API..."
-  # Use GitHub API instead of gh CLI (no auth required)
-  # Same method as runtime components for consistency
-  VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/releases" \
-    | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
-    | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-    | head -1)
+  # Use GitHub API with authentication if available to avoid rate limiting
+  if [[ -n "$GITHUB_TOKEN" ]]; then
+    VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+      "https://api.github.com/repos/${UPSTREAM_REPO}/releases" \
+      | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | head -1)
+  else
+    VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/releases" \
+      | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+      | head -1)
+  fi
 
   if [[ -z "$VERSION" ]]; then
     echo "⚠ Warning: Could not fetch version from releases, trying tags..."
     # Fallback: try tags endpoint
-    VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/tags" \
-      | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
-      | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-      | head -1)
+    if [[ -n "$GITHUB_TOKEN" ]]; then
+      VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+        "https://api.github.com/repos/${UPSTREAM_REPO}/tags" \
+        | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+        | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+        | head -1)
+    else
+      VERSION=$(curl -sk "https://api.github.com/repos/${UPSTREAM_REPO}/tags" \
+        | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+        | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+        | head -1)
+    fi
   fi
 
   if [[ -z "$VERSION" ]]; then
@@ -295,21 +331,49 @@ if [[ "$TOOL" == "podman" ]]; then
   fi
 fi
 
-# For podman-full, build runtime components
-if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
+# Build runtime components based on variant
+# default: crun + conmon (+ fuse-overlayfs for buildah)
+# full: all components
+if [[ "$VARIANT" != "standalone" ]]; then
   echo "========================================"
-  echo "Building runtime components for podman-full..."
+  echo "Building runtime components for $TOOL-$VARIANT..."
   echo "========================================"
+
+  # Determine which components to build based on tool and variant
+  # This MUST be before libseccomp build check
+  COMPONENTS_TO_BUILD=()
+
+  if [[ "$TOOL" == "podman" ]]; then
+    if [[ "$VARIANT" == "default" ]]; then
+      COMPONENTS_TO_BUILD=(crun conmon)
+    elif [[ "$VARIANT" == "full" ]]; then
+      COMPONENTS_TO_BUILD=(crun conmon fuse-overlayfs netavark aardvark-dns pasta catatonit)
+    fi
+  elif [[ "$TOOL" == "buildah" ]]; then
+    if [[ "$VARIANT" == "default" ]]; then
+      COMPONENTS_TO_BUILD=(crun conmon)
+    elif [[ "$VARIANT" == "full" ]]; then
+      COMPONENTS_TO_BUILD=(crun conmon fuse-overlayfs)
+    fi
+  elif [[ "$TOOL" == "skopeo" ]]; then
+    # skopeo doesn't need runtime components (doesn't run containers)
+    COMPONENTS_TO_BUILD=()
+  fi
+
+  echo "Components to build: ${COMPONENTS_TO_BUILD[*]:-none}"
+  echo ""
 
   # Build libseccomp from source (required for crun)
   # Reason: Ensures compatibility with Ubuntu 24.04 and musl libc static linking
-  echo "----------------------------------------"
-  echo "Building: libseccomp (dependency for crun)"
-  echo "----------------------------------------"
+  # Only build if crun is in the components list
+  if [[ " ${COMPONENTS_TO_BUILD[*]} " =~ " crun " ]]; then
+    echo "----------------------------------------"
+    echo "Building: libseccomp (dependency for crun)"
+    echo "----------------------------------------"
 
-  LIBSECCOMP_VERSION="v2.5.5"
-  LIBSECCOMP_SRC="$SRC_DIR/libseccomp"
-  LIBSECCOMP_INSTALL="$BUILD_DIR/libseccomp-install"
+    LIBSECCOMP_VERSION="v2.5.5"
+    LIBSECCOMP_SRC="$SRC_DIR/libseccomp"
+    LIBSECCOMP_INSTALL="$BUILD_DIR/libseccomp-install"
 
   if [[ ! -d "$LIBSECCOMP_SRC" ]]; then
     echo "Fetching libseccomp $LIBSECCOMP_VERSION..."
@@ -370,6 +434,7 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
       echo "⚠ Warning: libseccomp.a not found, crun may fail"
     fi
   fi
+  fi  # End of libseccomp build (only if crun needed)
 
   # Array of runtime components with their repos
   # Note: runc removed - not in original spec, crun is the default OCI runtime
@@ -383,7 +448,9 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
     [catatonit]="openSUSE/catatonit"
   )
 
-  for component in "${!COMPONENTS[@]}"; do
+  # COMPONENTS_TO_BUILD is already defined above (before libseccomp build)
+  # Build each component in the list
+  for component in "${COMPONENTS_TO_BUILD[@]}"; do
     echo "----------------------------------------"
     echo "Building: $component"
     echo "----------------------------------------"
@@ -401,20 +468,36 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
       fi
     else
       # GitHub repos: use API to get latest stable release tag
-      # This is more reliable than gh CLI and filters for semver format
+      # Use authentication if available to avoid rate limiting
       echo "Fetching version from GitHub API..."
-      COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/releases" \
-        | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
-        | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-        | head -1)
+      if [[ -n "$GITHUB_TOKEN" ]]; then
+        COMP_VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+          "https://api.github.com/repos/${COMP_REPO}/releases" \
+          | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+          | head -1)
+      else
+        COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/releases" \
+          | sed -En '/"tag_name"/ s#.*"([^"]+)".*#\1#p' \
+          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+          | head -1)
+      fi
 
       if [[ -z "$COMP_VERSION" ]]; then
         echo "⚠ Warning: Could not fetch version for $component from releases, trying tags..."
         # Fallback: try tags endpoint
-        COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/tags" \
-          | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
-          | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
-          | head -1)
+        if [[ -n "$GITHUB_TOKEN" ]]; then
+          COMP_VERSION=$(curl -sk -H "Authorization: Bearer $GITHUB_TOKEN" \
+            "https://api.github.com/repos/${COMP_REPO}/tags" \
+            | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+            | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | head -1)
+        else
+          COMP_VERSION=$(curl -sk "https://api.github.com/repos/${COMP_REPO}/tags" \
+            | sed -En '/"name"/ s#.*"([^"]+)".*#\1#p' \
+            | grep -E '^v?[0-9]+\.[0-9]+(\.[0-9]+)?$' \
+            | head -1)
+        fi
       fi
 
       if [[ -z "$COMP_VERSION" ]]; then
@@ -486,21 +569,31 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
           continue
         fi
 
+        # Determine musl target based on architecture
+        case "$ARCH" in
+          amd64)
+            MUSL_TARGET="x86_64-unknown-linux-musl"
+            ;;
+          arm64)
+            MUSL_TARGET="aarch64-unknown-linux-musl"
+            ;;
+        esac
+
         # Try musl target first (preferred), fallback to static feature
         RUST_TARGET=""
         BUILD_PATH="target/release"
 
         if command -v rustup &> /dev/null; then
           # Check if musl target is available
-          if rustup target list | grep -q "x86_64-unknown-linux-musl (installed)"; then
-            RUST_TARGET="--target x86_64-unknown-linux-musl"
-            BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+          if rustup target list | grep -q "$MUSL_TARGET (installed)"; then
+            RUST_TARGET="--target $MUSL_TARGET"
+            BUILD_PATH="target/$MUSL_TARGET/release"
             echo "  Using musl target for static linking"
           else
             echo "  musl target not installed, trying to add..."
-            rustup target add x86_64-unknown-linux-musl 2>/dev/null && {
-              RUST_TARGET="--target x86_64-unknown-linux-musl"
-              BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+            rustup target add "$MUSL_TARGET" 2>/dev/null && {
+              RUST_TARGET="--target $MUSL_TARGET"
+              BUILD_PATH="target/$MUSL_TARGET/release"
               echo "  ✓ Added musl target"
             }
           fi
@@ -535,21 +628,31 @@ if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
           continue
         fi
 
+        # Determine musl target based on architecture
+        case "$ARCH" in
+          amd64)
+            MUSL_TARGET="x86_64-unknown-linux-musl"
+            ;;
+          arm64)
+            MUSL_TARGET="aarch64-unknown-linux-musl"
+            ;;
+        esac
+
         # Try musl target first (preferred), fallback to static feature
         RUST_TARGET=""
         BUILD_PATH="target/release"
 
         if command -v rustup &> /dev/null; then
           # Check if musl target is available
-          if rustup target list | grep -q "x86_64-unknown-linux-musl (installed)"; then
-            RUST_TARGET="--target x86_64-unknown-linux-musl"
-            BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+          if rustup target list | grep -q "$MUSL_TARGET (installed)"; then
+            RUST_TARGET="--target $MUSL_TARGET"
+            BUILD_PATH="target/$MUSL_TARGET/release"
             echo "  Using musl target for static linking"
           else
             echo "  musl target not installed, trying to add..."
-            rustup target add x86_64-unknown-linux-musl 2>/dev/null && {
-              RUST_TARGET="--target x86_64-unknown-linux-musl"
-              BUILD_PATH="target/x86_64-unknown-linux-musl/release"
+            rustup target add "$MUSL_TARGET" 2>/dev/null && {
+              RUST_TARGET="--target $MUSL_TARGET"
+              BUILD_PATH="target/$MUSL_TARGET/release"
               echo "  ✓ Added musl target"
             }
           fi

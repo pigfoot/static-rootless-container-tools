@@ -18,14 +18,15 @@ on:
           - both
         default: both
       variant:
-        description: 'Build variant (full or minimal)'
+        description: 'Build variant (standalone/default/full or all)'
         required: false
         type: choice
         options:
+          - standalone
+          - default
           - full
-          - minimal
-          - both
-        default: both
+          - all
+        default: all
 
   # Called by check-releases workflow
   workflow_call:
@@ -71,7 +72,7 @@ jobs:
     strategy:
       matrix:
         arch: [amd64, arm64]
-        variant: [full, minimal]
+        variant: [standalone, default, full]
         include:
           - arch: amd64
             runner: ubuntu-24.04
@@ -100,6 +101,7 @@ jobs:
           TOOL: podman
           ARCH: ${{ matrix.arch }}
           VARIANT: ${{ matrix.variant }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           podman run --rm \
             -v ./scripts:/workspace/scripts:ro,z \
@@ -108,9 +110,10 @@ jobs:
             -e TOOL=$TOOL \
             -e ARCH=$ARCH \
             -e VARIANT=$VARIANT \
+            -e GITHUB_TOKEN=$GITHUB_TOKEN \
             docker.io/ubuntu:rolling \
             bash -c "
-              /workspace/scripts/container/setup-build-env.sh && \
+              source /workspace/scripts/container/setup-build-env.sh && \
               /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT && \
               /workspace/scripts/package.sh $TOOL $VERSION $ARCH $VARIANT
             "
@@ -119,15 +122,36 @@ jobs:
         env:
           ARCH: ${{ matrix.arch }}
         run: |
+          echo "Checking directory: build/podman-$ARCH/install/bin/"
+          ls -la build/podman-$ARCH/install/bin/ || {
+            echo "Error: Directory build/podman-$ARCH/install/bin/ not found"
+            exit 1
+          }
+
+          found_binary=false
           for binary in build/podman-$ARCH/install/bin/*; do
-            if ldd "$binary" 2>&1 | grep -q "not a dynamic executable"; then
+            # Skip if glob didn't match any files (bash returns the pattern itself)
+            if [[ ! -f "$binary" ]]; then
+              echo "Skipping non-file: $binary"
+              continue
+            fi
+
+            found_binary=true
+            echo "Checking: $binary"
+            output=$(ldd "$binary" 2>&1 || true)
+            if echo "$output" | grep -q "not a dynamic executable\|statically linked"; then
               echo "✓ $binary is statically linked"
             else
               echo "✗ $binary is NOT statically linked:"
-              ldd "$binary"
+              echo "$output"
               exit 1
             fi
           done
+
+          if [[ "$found_binary" == "false" ]]; then
+            echo "Error: No binaries found in build/podman-$ARCH/install/bin/"
+            exit 1
+          fi
 
       - name: Test podman binary
         env:
@@ -137,12 +161,26 @@ jobs:
           ./build/podman-$ARCH/install/bin/podman version
           echo "✓ podman binary works correctly"
 
+      - name: Set tarball name
+        id: tarball
+        env:
+          VARIANT: ${{ matrix.variant }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # default variant uses simple name, others include variant
+          if [[ "$VARIANT" == "default" ]]; then
+            TARBALL_NAME="podman-linux-${ARCH}.tar.zst"
+          else
+            TARBALL_NAME="podman-${VARIANT}-linux-${ARCH}.tar.zst"
+          fi
+          echo "name=$TARBALL_NAME" >> $GITHUB_OUTPUT
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
           name: podman-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
-            build/podman-${{ matrix.variant }}-linux-${{ matrix.arch }}.tar.zst
+            build/${{ steps.tarball.outputs.name }}
           retention-days: 7
 
   release:
@@ -189,16 +227,21 @@ jobs:
             - linux/arm64
 
           **VARIANTS**
-            - `podman-full`: Includes all runtime components (crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit)
-            - `podman-minimal`: Binary only
+            - `podman-linux-{arch}.tar.zst`: Default variant with crun + conmon + configs (⭐ RECOMMENDED for most users)
+            - `podman-standalone-linux-{arch}.tar.zst`: Binary only (⚠️ NOT RECOMMENDED - requires system runc ≥1.1.11 + latest conmon)
+            - `podman-full-linux-{arch}.tar.zst`: Complete rootless stack with all components (crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit)
+
+          **COMPATIBILITY WARNINGS**
+            - `standalone` requires compatible system packages (most Ubuntu versions have outdated runc/conmon)
+            - `default` (simple name) and `full` include all required runtimes - work on any Linux distribution
 
           **INSTALLATION**
           ```bash
-          # Download tarball for your architecture and variant
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/podman-${{ inputs.version }}/podman-full-linux-amd64.tar.zst
+          # Download tarball for your architecture (default variant recommended)
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/podman-${{ inputs.version }}/podman-linux-amd64.tar.zst
 
           # Extract
-          tar -xf podman-full-linux-amd64.tar.zst
+          tar -xf podman-linux-amd64.tar.zst
           cd podman-${{ inputs.version }}
 
           # Install system-wide
@@ -222,10 +265,10 @@ jobs:
           Verify cosign signature (example):
           ```bash
           cosign verify-blob \
-            --bundle=podman-full-linux-amd64.tar.zst.bundle \
+            --bundle=podman-linux-amd64.tar.zst.bundle \
             --certificate-identity-regexp='https://github.com/.*' \
             --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-            podman-full-linux-amd64.tar.zst
+            podman-linux-amd64.tar.zst
           ```
 
           **BUILD DETAILS**

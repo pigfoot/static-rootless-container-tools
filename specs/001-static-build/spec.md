@@ -87,7 +87,10 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - **FR-005**: System MUST support manual build triggers with configurable tool and version parameters
 - **FR-006**: System MUST generate SHA256 checksums for all release artifacts
 - **FR-007**: System MUST sign all release artifacts using Sigstore/cosign keyless signing
-- **FR-008**: System MUST provide two podman variants: "full" (with runtime components) and "minimal" (binary only)
+- **FR-008**: System MUST provide three package variants for podman, buildah, and skopeo:
+  - **standalone**: Binary only (for users with existing system runtimes)
+  - **default**: Binary + minimum runtime components (crun, conmon) + configs (recommended for most users)
+  - **full**: Binary + all companion tools (complete rootless stack)
 - **FR-009**: System MUST skip pre-release versions (alpha, beta, rc) and only build stable releases
 - **FR-010**: System MUST check GitHub Releases to track which versions have been released to avoid duplicate builds
 - **FR-011**: System MUST fail the entire release if any architecture build fails (no partial releases)
@@ -97,19 +100,126 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - **NFR-001**: Podman-full package SHOULD NOT exceed 100MB total size (current: ~72MB for 8 components)
 - **NFR-002**: Individual binary sizes SHOULD remain under 50MB (largest: podman at 44MB)
 
-### Podman Full Package Components
+### Package Variants
 
-**Current Build Status (as of 2025-12-14)**: 8/8 components successfully building (100%) ✅
+**Current Build Status (as of 2025-12-15)**: All components successfully building ✅
 
-**✅ All Components Building Successfully**:
-- **podman**: Main container management tool (44M, static)
-- **conmon**: Container monitor process (2.0M, static) ✅ Fixed with libglib2.0-dev
-- **crun**: OCI runtime (3.6M, static) ✅ Fixed with libcap-dev + libseccomp source build
-- **netavark**: Container networking (14M, static) ✅ Fixed with Rust musl target
-- **aardvark-dns**: DNS server for container networks (3.5M, static) ✅ Fixed with Rust musl target
-- **pasta**: Rootless networking (1.3M + 1.3M AVX2, static) ✅ Fixed with Clang migration
-- **fuse-overlayfs**: Rootless overlay filesystem (1.3M, static) ✅ Fixed with libfuse manual install
-- **catatonit**: Minimal init process for containers (847K, static)
+#### Variant 1: standalone (Binary Only)
+
+**Contents**:
+- **podman/buildah/skopeo**: Main binary only (44M for podman, ~50M for buildah, ~30M for skopeo)
+
+**Use Case**: Users with existing compatible system runtimes (runc/crun ≥ v1.1.11, latest conmon)
+
+**Compatibility Requirements**:
+- ⚠️ **Requires system runc/crun** ≥ v1.1.11 (Ubuntu 22.04 base version 1.1.0 is TOO OLD)
+- ⚠️ **Requires latest conmon** (Ubuntu's conmon is typically outdated)
+- ❌ **NOT RECOMMENDED** unless you have verified compatible system packages
+
+**Known Issues**:
+- Ubuntu 22.04 base: runc 1.1.0 < 1.1.11 required → Will fail
+- Most distributions: conmon too old → Will fail with version mismatch errors
+
+#### Variant 2: default (Recommended)
+
+**Contents**:
+- **Main binary**: podman/buildah/skopeo
+- **Minimum runtime**: crun (2.6M), conmon (2.3M)
+- **Default configs**: /etc/containers/* (registries.conf, policy.json, storage.conf)
+
+**Total Size**: ~49M for podman-default
+
+**Use Case**: Recommended for most users - provides core functionality without system dependencies
+
+**Features**:
+- ✅ Container execution (via crun)
+- ✅ Container monitoring (via conmon)
+- ✅ Basic networking (host network only)
+- ❌ No custom networks (requires netavark/aardvark-dns from full variant)
+- ❌ No rootless overlay mounts (requires fuse-overlayfs from full variant)
+
+#### Variant 3: full (Complete Stack)
+
+**Contents** (8 components):
+- **podman/buildah/skopeo**: Main binary (44M/~50M/~30M)
+- **conmon**: Container monitor process (2.3M, static) ✅ Fixed with libglib2.0-dev
+- **crun**: OCI runtime (2.6M, static) ✅ Fixed with libcap-dev + gperf + libseccomp source build
+- **netavark**: Container networking (14M, static) ✅ Fixed with Rust 1.92 + musl target
+- **aardvark-dns**: DNS server for container networks (3.5M, static) ✅ Fixed with Rust 1.92 + musl target
+- **pasta**: Rootless networking (1.5M + 1.5M AVX2, static) ✅ Fixed with Clang migration
+- **fuse-overlayfs**: Rootless overlay filesystem (1.4M, static) ✅ Fixed with libfuse manual install
+- **catatonit**: Minimal init process for containers (953K, static)
+
+**Total Size**: ~57M for podman-full
+
+**Use Case**: Complete rootless container stack with all features
+
+**Features**:
+- ✅ All features from default variant
+- ✅ Custom container networks (netavark + aardvark-dns)
+- ✅ Rootless overlay mounts (fuse-overlayfs)
+- ✅ Advanced rootless networking (pasta with AVX2 optimization)
+- ✅ Proper init process handling (catatonit)
+
+### Package Naming Convention
+
+**Tarball naming**:
+- **default variant**: `{tool}-linux-{arch}.tar.zst` (simplified name, e.g., `podman-linux-amd64.tar.zst`)
+- **other variants**: `{tool}-{variant}-linux-{arch}.tar.zst` (e.g., `podman-standalone-linux-amd64.tar.zst`, `podman-full-linux-amd64.tar.zst`)
+
+**Rationale**: Default variant is the recommended option, so it gets the simplest filename for ease of use.
+
+### Variant Comparison by Tool
+
+#### Podman Variants
+
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **standalone** | ~44MB | `podman` | Users with system runc ≥1.1.11 + latest conmon (NOT RECOMMENDED) |
+| **default** ⭐ | ~49MB | `podman` + `crun` + `conmon` + configs | Recommended - Core container functionality |
+| **full** | ~74MB | default + `netavark` + `aardvark-dns` + `pasta` + `fuse-overlayfs` + `catatonit` | Complete rootless stack with networking |
+
+**Default variant includes**:
+- Main binary: podman (44MB)
+- Runtime: crun (2.6MB), conmon (2.3MB)
+- Configs: /etc/containers/* (registries.conf, policy.json, storage.conf)
+
+**Full variant adds**:
+- Networking: netavark (14MB), aardvark-dns (3.5MB), pasta + pasta.avx2 (3MB)
+- Rootless FS: fuse-overlayfs (1.4MB)
+- Init: catatonit (953KB)
+
+#### Buildah Variants
+
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **standalone** | ~50MB | `buildah` | Users with system runc/crun + conmon (NOT RECOMMENDED) |
+| **default** ⭐ | ~55MB | `buildah` + `crun` + `conmon` + configs | Recommended - Build images with `buildah run` support |
+| **full** | ~56MB | default + `fuse-overlayfs` | Rootless image building with overlay mounts |
+
+**Default variant includes**:
+- Main binary: buildah (~50MB)
+- Runtime: crun (2.6MB), conmon (2.3MB) ← Required for `buildah run`
+- Configs: /etc/containers/*
+
+**Full variant adds**:
+- Rootless FS: fuse-overlayfs (1.4MB) ← Required for rootless overlay mounts during builds
+
+**Note**: buildah does NOT need netavark/aardvark-dns/pasta (only uses host networking)
+
+#### Skopeo Variants
+
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **standalone** | ~30MB | `skopeo` | Binary only |
+| **default** ⭐ | ~30MB | `skopeo` + configs | Recommended - Image operations with registry configs |
+| **full** | ~30MB | Same as default | Alias for default (skopeo needs no runtime components) |
+
+**Default variant includes**:
+- Main binary: skopeo (~30MB)
+- Configs: /etc/containers/* (registries.conf, policy.json)
+
+**Note**: skopeo does NOT run containers, so default and full variants are identical
 
 ### Key Entities
 

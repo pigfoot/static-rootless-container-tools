@@ -7,9 +7,27 @@ set -euo pipefail
 
 echo "=== Setting up build environment inside container ==="
 
-# Update package list
+# Update package list with retry logic (temporarily disable exit on error)
 echo "Updating package list..."
-apt-get update
+set +e  # Disable exit on error for retry logic
+for i in {1..3}; do
+    apt-get update
+    if [ $? -eq 0 ]; then
+        echo "✓ apt-get update successful"
+        set -e  # Re-enable exit on error
+        break
+    else
+        if [ $i -lt 3 ]; then
+            echo "⚠ Warning: apt-get update failed (attempt $i/3)"
+            echo "Retrying in 10 seconds..."
+            sleep 10
+        else
+            echo "✗ Error: apt-get update failed after 3 attempts"
+            set -e  # Re-enable exit on error before exiting
+            exit 1
+        fi
+    fi
+done
 
 # Install base dependencies (excluding toolchains)
 echo "Installing base dependencies..."
@@ -35,23 +53,53 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     meson \
     protobuf-compiler
 
-# Install latest stable Clang/LLVM from official LLVM apt repository
-echo "Installing latest stable Clang/LLVM..."
-# Add LLVM repository
-curl -fsSL https://apt.llvm.org/llvm-snapshot.gpg.key | tee /etc/apt/trusted.gpg.d/apt.llvm.org.asc
-add-apt-repository -y "deb http://apt.llvm.org/noble/ llvm-toolchain-noble main"
-apt-get update
+# Install latest stable Clang/LLVM from GitHub releases
+echo "Installing latest stable Clang/LLVM from GitHub..."
 
-# Install latest LLVM/Clang (version 19 as of 2025-12)
-DEBIAN_FRONTEND=noninteractive apt-get install -y \
-    clang-19 \
-    llvm-19 \
-    lld-19
+# Detect architecture
+LLVM_ARCH=$(uname -m)
+if [[ "$LLVM_ARCH" == "x86_64" ]]; then
+    LLVM_ARCH="X64"
+elif [[ "$LLVM_ARCH" == "aarch64" ]]; then
+    LLVM_ARCH="ARM64"
+else
+    echo "Error: Unsupported architecture: $LLVM_ARCH"
+    exit 1
+fi
 
-# Set up alternatives to use clang-19 as default
-update-alternatives --install /usr/bin/clang clang /usr/bin/clang-19 100
-update-alternatives --install /usr/bin/clang++ clang++ /usr/bin/clang++-19 100
-update-alternatives --install /usr/bin/lld lld /usr/bin/lld-19 100
+# Get latest LLVM release version
+# Use GITHUB_TOKEN if available to avoid rate limiting
+if [[ -n "$GITHUB_TOKEN" ]]; then
+  LLVM_TAG=$(curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" \
+      https://api.github.com/repos/llvm/llvm-project/releases/latest | \
+      sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
+else
+  LLVM_TAG=$(curl -fsSL https://api.github.com/repos/llvm/llvm-project/releases/latest | \
+      sed -n 's/.*"tag_name": "\([^"]*\)".*/\1/p')
+fi
+LLVM_VERSION="${LLVM_TAG#llvmorg-}"
+echo "  Detected latest LLVM version: $LLVM_VERSION (tag: $LLVM_TAG)"
+
+# Download and extract LLVM
+LLVM_TARBALL="LLVM-${LLVM_VERSION}-Linux-${LLVM_ARCH}.tar.xz"
+LLVM_URL="https://github.com/llvm/llvm-project/releases/download/llvmorg-${LLVM_VERSION}/${LLVM_TARBALL}"
+
+echo "  Downloading $LLVM_TARBALL..."
+curl -fsSL "$LLVM_URL" -o /tmp/llvm.tar.xz
+
+echo "  Extracting to /usr/local/llvm..."
+mkdir -p /usr/local/llvm
+tar -xf /tmp/llvm.tar.xz -C /usr/local/llvm --strip-components=1
+rm /tmp/llvm.tar.xz
+
+# Add LLVM to PATH and set up symlinks
+export PATH="/usr/local/llvm/bin:$PATH"
+echo 'export PATH="/usr/local/llvm/bin:$PATH"' >> /etc/profile.d/llvm.sh
+
+# Create symlinks for standard names
+ln -sf /usr/local/llvm/bin/clang /usr/bin/clang
+ln -sf /usr/local/llvm/bin/clang++ /usr/bin/clang++
+ln -sf /usr/local/llvm/bin/lld /usr/bin/lld
 
 # Install latest stable Go from official golang.org
 echo "Installing latest stable Go..."

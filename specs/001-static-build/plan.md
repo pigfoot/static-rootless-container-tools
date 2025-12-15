@@ -37,7 +37,7 @@ Build a fully automated release pipeline for static podman, buildah, and skopeo 
 | I. Truly Static Binaries | ✅ PASS | Clang + musl target produces static binaries; verified with `ldd`; containerized build ensures clean environment |
 | II. Independent Tool Releases | ✅ PASS | Separate workflows per tool; version tracking per tool |
 | III. Reproducible Builds | ✅ PASS | **IMPROVED**: Container-based builds ensure exact same environment; Ubuntu:rolling provides consistent package versions; exact build steps in scripts |
-| IV. Minimal Dependencies | ✅ PASS | Only required runtime components in podman-full; minimal has binary only; **runner only needs podman** |
+| IV. Minimal Dependencies | ✅ PASS | Three variants (standalone/default/full); default has minimum required runtime; full has complete stack; **runner only needs podman** |
 | V. Automated Release Pipeline | ✅ PASS | Daily cron + workflow_dispatch; cosign signing; auto GitHub Release |
 
 **Constitution Alignment Improvements**:
@@ -199,22 +199,30 @@ podman run --rm \
 
 ### Artifact Structure
 
-For podman:
+For podman (3 variants):
 ```
+podman-linux-amd64.tar.zst          # default variant (simplified name)
+podman-linux-arm64.tar.zst          # default variant (simplified name)
+podman-standalone-linux-amd64.tar.zst
+podman-standalone-linux-arm64.tar.zst
 podman-full-linux-amd64.tar.zst
 podman-full-linux-arm64.tar.zst
-podman-minimal-linux-amd64.tar.zst
-podman-minimal-linux-arm64.tar.zst
 checksums.txt
-cosign signatures (attached to release)
+cosign signature bundles (*.bundle)
 ```
 
-For buildah/skopeo:
+For buildah/skopeo (3 variants each):
 ```
-buildah-linux-amd64.tar.zst
-buildah-linux-arm64.tar.zst
+buildah-linux-amd64.tar.zst           # default variant (simplified name)
+buildah-linux-arm64.tar.zst           # default variant (simplified name)
+buildah-standalone-linux-amd64.tar.zst
+buildah-standalone-linux-arm64.tar.zst
+buildah-full-linux-amd64.tar.zst
+buildah-full-linux-arm64.tar.zst
 checksums.txt
-cosign signatures
+cosign signature bundles (*.bundle)
+
+# Skopeo follows same pattern (all variants identical for skopeo)
 ```
 
 ### Tarball Contents (podman-full example)

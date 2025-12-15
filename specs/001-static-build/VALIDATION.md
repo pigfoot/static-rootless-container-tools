@@ -34,16 +34,18 @@ Before running this validation, ensure:
 ### Podman Build Workflow
 
 - [ ] Trigger `build-podman.yml` manually with version input (e.g., v5.3.1)
-- [ ] Workflow builds all matrix combinations:
+- [ ] Workflow builds all matrix combinations (3 variants × 2 architectures = 6):
+  - [ ] podman-linux-amd64 (default variant - simplified name)
+  - [ ] podman-linux-arm64 (default variant - simplified name)
+  - [ ] podman-standalone-linux-amd64
+  - [ ] podman-standalone-linux-arm64
   - [ ] podman-full-linux-amd64
   - [ ] podman-full-linux-arm64
-  - [ ] podman-minimal-linux-amd64
-  - [ ] podman-minimal-linux-arm64
 - [ ] All artifacts uploaded successfully
 - [ ] Release created with tag `podman-v5.3.1`
 - [ ] Release includes:
-  - [ ] 4 tarballs (.tar.zst)
-  - [ ] 4 signatures (.tar.zst.sig)
+  - [ ] 6 tarballs (.tar.zst) - 3 variants × 2 architectures
+  - [ ] 6 cosign signature bundles (.tar.zst.bundle)
   - [ ] checksums.txt
   - [ ] Proper release notes with installation instructions
 
@@ -147,7 +149,8 @@ Wait for next cron execution (or manually trigger):
 
 - [ ] `build-podman.yml` has `workflow_dispatch` with:
   - [ ] `version` input (required)
-  - [ ] `variant` input (full/minimal/both)
+  - [ ] `variant` input (standalone/default/full/all)
+  - [ ] `architecture` input (amd64/arm64/both)
 - [ ] `build-buildah.yml` has `workflow_dispatch` with `version` input
 - [ ] `build-skopeo.yml` has `workflow_dispatch` with `version` input
 

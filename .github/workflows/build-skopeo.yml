@@ -17,6 +17,16 @@ on:
           - arm64
           - both
         default: both
+      variant:
+        description: 'Build variant (standalone/default/full or all)'
+        required: false
+        type: choice
+        options:
+          - standalone
+          - default
+          - full
+          - all
+        default: all
 
   # Called by check-releases workflow
   workflow_call:
@@ -56,12 +66,13 @@ jobs:
           echo "✓ Version '$VERSION' is valid"
 
   build:
-    name: Build skopeo-${{ matrix.arch }}
+    name: Build skopeo-${{ matrix.variant }}-${{ matrix.arch }}
     needs: validate
     runs-on: ${{ matrix.runner }}
     strategy:
       matrix:
         arch: [amd64, arm64]
+        variant: [standalone, default, full]
         include:
           - arch: amd64
             runner: ubuntu-24.04
@@ -89,6 +100,8 @@ jobs:
           VERSION: ${{ inputs.version }}
           TOOL: skopeo
           ARCH: ${{ matrix.arch }}
+          VARIANT: ${{ matrix.variant }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           podman run --rm \
             -v ./scripts:/workspace/scripts:ro,z \
@@ -96,26 +109,49 @@ jobs:
             -e VERSION=$VERSION \
             -e TOOL=$TOOL \
             -e ARCH=$ARCH \
+            -e VARIANT=$VARIANT \
+            -e GITHUB_TOKEN=$GITHUB_TOKEN \
             docker.io/ubuntu:rolling \
             bash -c "
-              /workspace/scripts/container/setup-build-env.sh && \
-              /workspace/scripts/build-tool.sh $TOOL $ARCH && \
-              /workspace/scripts/package.sh $TOOL $VERSION $ARCH
+              source /workspace/scripts/container/setup-build-env.sh && \
+              /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT && \
+              /workspace/scripts/package.sh $TOOL $VERSION $ARCH $VARIANT
             "
 
       - name: Verify static linking
         env:
           ARCH: ${{ matrix.arch }}
         run: |
+          echo "Checking directory: build/skopeo-$ARCH/install/bin/"
+          ls -la build/skopeo-$ARCH/install/bin/ || {
+            echo "Error: Directory build/skopeo-$ARCH/install/bin/ not found"
+            exit 1
+          }
+
+          found_binary=false
           for binary in build/skopeo-$ARCH/install/bin/*; do
-            if ldd "$binary" 2>&1 | grep -q "not a dynamic executable"; then
+            # Skip if glob didn't match any files (bash returns the pattern itself)
+            if [[ ! -f "$binary" ]]; then
+              echo "Skipping non-file: $binary"
+              continue
+            fi
+
+            found_binary=true
+            echo "Checking: $binary"
+            output=$(ldd "$binary" 2>&1 || true)
+            if echo "$output" | grep -q "not a dynamic executable\|statically linked"; then
               echo "✓ $binary is statically linked"
             else
               echo "✗ $binary is NOT statically linked:"
-              ldd "$binary"
+              echo "$output"
               exit 1
             fi
           done
+
+          if [[ "$found_binary" == "false" ]]; then
+            echo "Error: No binaries found in build/skopeo-$ARCH/install/bin/"
+            exit 1
+          fi
 
       - name: Test skopeo binary
         env:
@@ -125,12 +161,26 @@ jobs:
           ./build/skopeo-$ARCH/install/bin/skopeo --version
           echo "✓ skopeo binary works correctly"
 
+      - name: Set tarball name
+        id: tarball
+        env:
+          VARIANT: ${{ matrix.variant }}
+          ARCH: ${{ matrix.arch }}
+        run: |
+          # default variant uses simple name, others include variant
+          if [[ "$VARIANT" == "default" ]]; then
+            TARBALL_NAME="skopeo-linux-${ARCH}.tar.zst"
+          else
+            TARBALL_NAME="skopeo-${VARIANT}-linux-${ARCH}.tar.zst"
+          fi
+          echo "name=$TARBALL_NAME" >> $GITHUB_OUTPUT
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
         with:
-          name: skopeo-${{ matrix.arch }}
+          name: skopeo-${{ matrix.variant }}-${{ matrix.arch }}
           path: |
-            build/skopeo-linux-${{ matrix.arch }}.tar.zst
+            build/${{ steps.tarball.outputs.name }}
           retention-days: 7
 
   release:
@@ -170,15 +220,22 @@ jobs:
 
           # Create release notes
           cat > /tmp/release-notes.md <<'NOTES'
-          Static binary for skopeo built with Clang + musl + mimalloc (containerized build)
+          Static binaries for skopeo built with Clang + musl + mimalloc (containerized build)
 
           **ARCHITECTURES**
             - linux/amd64
             - linux/arm64
 
+          **VARIANTS**
+            - `skopeo-linux-{arch}.tar.zst`: Default variant with registry configs (⭐ RECOMMENDED)
+            - `skopeo-standalone-linux-{arch}.tar.zst`: Binary only
+            - `skopeo-full-linux-{arch}.tar.zst`: Alias for default (skopeo needs no runtime components)
+
+          **NOTE**: All skopeo variants are essentially the same (~30MB) since skopeo is a registry client tool that doesn't run containers. The default variant includes registry configuration files.
+
           **INSTALLATION**
           ```bash
-          # Download tarball for your architecture
+          # Download tarball for your architecture (default variant recommended)
           curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-linux-amd64.tar.zst
 
           # Extract

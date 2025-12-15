@@ -19,6 +19,8 @@ if [[ -z "$TOOL" || -z "$VERSION" || -z "$ARCH" ]]; then
   echo "Error: Missing required arguments" >&2
   echo "Usage: $0 <tool> <version> <arch> [variant]" >&2
   echo "Example: $0 podman v5.3.1 amd64 full" >&2
+  echo "         $0 buildah v1.35.0 arm64 default" >&2
+  echo "         $0 skopeo v1.14.0 amd64 standalone" >&2
   exit 1
 fi
 
@@ -27,11 +29,29 @@ if [[ ! "$VERSION" =~ ^v ]]; then
   VERSION="v$VERSION"
 fi
 
+# Set variant (default: "default" for all tools)
+if [[ -z "$VARIANT" ]]; then
+  VARIANT="default"
+fi
+
+# Validate variant
+case "$VARIANT" in
+  standalone|default|full)
+    ;;
+  *)
+    echo "Error: Unsupported variant: $VARIANT" >&2
+    echo "Supported: standalone (binary only), default (+ crun/conmon), full (all components)" >&2
+    exit 1
+    ;;
+esac
+
 # Determine tarball name
-if [[ -n "$VARIANT" ]]; then
-  TARBALL_NAME="${TOOL}-${VARIANT}-linux-${ARCH}"
-else
+# default variant uses simple name (e.g., podman-linux-amd64.tar.zst)
+# other variants include variant name (e.g., podman-full-linux-amd64.tar.zst)
+if [[ "$VARIANT" == "default" ]]; then
   TARBALL_NAME="${TOOL}-linux-${ARCH}"
+else
+  TARBALL_NAME="${TOOL}-${VARIANT}-linux-${ARCH}"
 fi
 
 PACKAGE_DIR="${TOOL}-${VERSION}"
@@ -143,8 +163,8 @@ mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin"
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman"
 
 # Define which binaries go where
-BIN_TOOLS="podman crun runc fuse-overlayfs fusermount3 pasta pasta.avx2 buildah skopeo"
-LIB_HELPERS="conmon netavark aardvark-dns catatonit rootlessport"
+BIN_TOOLS="podman crun fuse-overlayfs pasta pasta.avx2 buildah skopeo"
+LIB_HELPERS="conmon netavark aardvark-dns catatonit"
 
 # Copy user-facing tools to bin/
 for binary in $BIN_TOOLS; do
@@ -185,45 +205,77 @@ if [[ -d "$INSTALL_DIR/libexec/podman" ]]; then
   done
 fi
 
-# Validate required components for podman-full variant
-if [[ "$TOOL" == "podman" && "$VARIANT" == "full" ]]; then
-  echo ""
-  echo "Validating required components for podman-full..."
+# Validate required components based on tool and variant
+echo ""
+echo "Validating required components for $TOOL-$VARIANT..."
 
-  # Required components for podman-full (from spec.md:100-112)
-  REQUIRED_COMPONENTS=(
-    "usr/local/bin/podman"
-    "usr/local/bin/crun"
-    "usr/local/bin/fuse-overlayfs"
-    "usr/local/bin/pasta"
-    "usr/local/lib/podman/conmon"
-    "usr/local/lib/podman/netavark"
-    "usr/local/lib/podman/aardvark-dns"
-    "usr/local/lib/podman/catatonit"
-  )
+REQUIRED_COMPONENTS=()
 
-  MISSING_COMPONENTS=()
-  for component in "${REQUIRED_COMPONENTS[@]}"; do
-    if [[ ! -f "$STAGING_DIR/$PACKAGE_DIR/$component" ]]; then
-      MISSING_COMPONENTS+=("$component")
-    fi
-  done
-
-  if [[ ${#MISSING_COMPONENTS[@]} -gt 0 ]]; then
-    echo ""
-    echo "❌ ERROR: Missing required components for podman-full:"
-    for missing in "${MISSING_COMPONENTS[@]}"; do
-      echo "  - $missing"
-    done
-    echo ""
-    echo "These components are required by spec.md and MUST be present."
-    echo "Build failures should be fixed, not silently ignored."
-    exit 1
+# Define required components based on tool and variant
+if [[ "$TOOL" == "podman" ]]; then
+  if [[ "$VARIANT" == "standalone" ]]; then
+    REQUIRED_COMPONENTS=("usr/local/bin/podman")
+  elif [[ "$VARIANT" == "default" ]]; then
+    REQUIRED_COMPONENTS=(
+      "usr/local/bin/podman"
+      "usr/local/bin/crun"
+      "usr/local/lib/podman/conmon"
+    )
+  elif [[ "$VARIANT" == "full" ]]; then
+    REQUIRED_COMPONENTS=(
+      "usr/local/bin/podman"
+      "usr/local/bin/crun"
+      "usr/local/bin/fuse-overlayfs"
+      "usr/local/bin/pasta"
+      "usr/local/lib/podman/conmon"
+      "usr/local/lib/podman/netavark"
+      "usr/local/lib/podman/aardvark-dns"
+      "usr/local/lib/podman/catatonit"
+    )
   fi
-
-  echo "✅ All required components present (8/8)"
-  echo ""
+elif [[ "$TOOL" == "buildah" ]]; then
+  if [[ "$VARIANT" == "standalone" ]]; then
+    REQUIRED_COMPONENTS=("usr/local/bin/buildah")
+  elif [[ "$VARIANT" == "default" ]]; then
+    REQUIRED_COMPONENTS=(
+      "usr/local/bin/buildah"
+      "usr/local/bin/crun"
+      "usr/local/lib/podman/conmon"
+    )
+  elif [[ "$VARIANT" == "full" ]]; then
+    REQUIRED_COMPONENTS=(
+      "usr/local/bin/buildah"
+      "usr/local/bin/crun"
+      "usr/local/bin/fuse-overlayfs"
+      "usr/local/lib/podman/conmon"
+    )
+  fi
+elif [[ "$TOOL" == "skopeo" ]]; then
+  # skopeo doesn't need runtime components (doesn't run containers)
+  REQUIRED_COMPONENTS=("usr/local/bin/skopeo")
 fi
+
+MISSING_COMPONENTS=()
+for component in "${REQUIRED_COMPONENTS[@]}"; do
+  if [[ ! -f "$STAGING_DIR/$PACKAGE_DIR/$component" ]]; then
+    MISSING_COMPONENTS+=("$component")
+  fi
+done
+
+if [[ ${#MISSING_COMPONENTS[@]} -gt 0 ]]; then
+  echo ""
+  echo "❌ ERROR: Missing required components for $TOOL-$VARIANT:"
+  for missing in "${MISSING_COMPONENTS[@]}"; do
+    echo "  - $missing"
+  done
+  echo ""
+  echo "These components are required by spec.md and MUST be present."
+  echo "Build failures should be fixed, not silently ignored."
+  exit 1
+fi
+
+echo "✅ All required components present (${#REQUIRED_COMPONENTS[@]}/${#REQUIRED_COMPONENTS[@]})"
+echo ""
 
 # Copy etc/ directory with default configs
 echo "Copying configuration files to etc/containers/..."

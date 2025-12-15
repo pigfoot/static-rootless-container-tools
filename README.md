@@ -24,25 +24,29 @@ Build truly static binaries for **podman**, **buildah**, and **skopeo** targetin
 REPO="pigfoot/rootless-static-toolkits"
 ARCH=$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "amd64")
 
-# Download latest podman-full
-TOOL="podman"; VARIANT="-full"
+# Download latest podman (default variant - recommended)
+TOOL="podman"
 TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
   sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
   zstd -d | tar xvf -
 
-# Download latest buildah
-TOOL="buildah"; VARIANT=""
-TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
-  sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+# Or download podman-full for complete rootless stack
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-full-linux-${ARCH}.tar.zst" | \
   zstd -d | tar xvf -
 
-# Download latest skopeo
-TOOL="skopeo"; VARIANT=""
+# Download latest buildah (default variant - recommended)
+TOOL="buildah"
 TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
   sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
-curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT}-linux-${ARCH}.tar.zst" | \
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
+  zstd -d | tar xvf -
+
+# Download latest skopeo (default variant - recommended)
+TOOL="skopeo"
+TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
+  sed -n 's/.*"tag_name": "\('"${TOOL}"'-v[^"]*\)".*/\1/p' | head -1)
+curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${ARCH}.tar.zst" | \
   zstd -d | tar xvf -
 ```
 
@@ -51,11 +55,11 @@ curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}${VARIANT
 Check [Releases](https://github.com/pigfoot/rootless-static-toolkits/releases) for all available versions.
 
 ```bash
-# Example: Download podman-full v5.7.1 for linux/amd64
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-full-linux-amd64.tar.zst
+# Example: Download podman default variant v5.7.1 for linux/amd64 (recommended)
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst
 
 # Extract
-zstd -d podman-full-linux-amd64.tar.zst && tar -xf podman-full-linux-amd64.tar
+zstd -d podman-linux-amd64.tar.zst && tar -xf podman-linux-amd64.tar
 cd podman-v5.7.1
 
 # Install system-wide
@@ -79,28 +83,59 @@ curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/downl
 sha256sum -c checksums.txt --ignore-missing
 
 # Verify cosign signature (requires cosign CLI)
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-full-linux-amd64.tar.zst.bundle
+curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst.bundle
 cosign verify-blob \
-  --bundle=podman-full-linux-amd64.tar.zst.bundle \
+  --bundle=podman-linux-amd64.tar.zst.bundle \
   --certificate-identity-regexp='https://github.com/.*' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  podman-full-linux-amd64.tar.zst
+  podman-linux-amd64.tar.zst
 ```
 
-## Available Tools
+## Package Variants
 
-### podman
+All tools provide three package variants to suit different use cases:
 
-- **podman-full**: Includes all runtime components (crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit)
-- **podman-minimal**: Binary only
+### Podman Variants
 
-### buildah
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **podman-linux-{arch}.tar.zst** ⭐ | ~49MB | podman + crun + conmon + configs | **RECOMMENDED** - Core container functionality, works everywhere |
+| **podman-standalone-linux-{arch}.tar.zst** ⚠️ | ~44MB | podman only | NOT RECOMMENDED - requires system runc ≥1.1.11 + latest conmon |
+| **podman-full-linux-{arch}.tar.zst** | ~74MB | Default + all networking tools | Complete rootless stack with custom networks |
 
-Single binary for building OCI images.
+**Default variant includes**: podman (44MB), crun (2.6MB), conmon (2.3MB), configs
 
-### skopeo
+**Full variant adds**: netavark (14MB), aardvark-dns (3.5MB), pasta + pasta.avx2 (3MB), fuse-overlayfs (1.4MB), catatonit (953KB)
 
-Single binary for image operations.
+### Buildah Variants
+
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **buildah-linux-{arch}.tar.zst** ⭐ | ~55MB | buildah + crun + conmon + configs | **RECOMMENDED** - Build images with `buildah run` support |
+| **buildah-standalone-linux-{arch}.tar.zst** ⚠️ | ~50MB | buildah only | NOT RECOMMENDED - requires system runc/crun + conmon |
+| **buildah-full-linux-{arch}.tar.zst** | ~56MB | Default + fuse-overlayfs | Rootless image building with overlay mounts |
+
+**Default variant includes**: buildah (~50MB), crun (2.6MB), conmon (2.3MB), configs
+
+**Full variant adds**: fuse-overlayfs (1.4MB) for rootless overlay mounts
+
+### Skopeo Variants
+
+| Variant | Size | Components | Use Case |
+|---------|------|------------|----------|
+| **skopeo-linux-{arch}.tar.zst** ⭐ | ~30MB | skopeo + configs | **RECOMMENDED** - Image operations with registry configs |
+| **skopeo-standalone-linux-{arch}.tar.zst** | ~30MB | skopeo only | Binary only |
+| **skopeo-full-linux-{arch}.tar.zst** | ~30MB | Same as default | Alias (skopeo needs no runtime components) |
+
+**Note**: All skopeo variants are essentially the same since skopeo doesn't run containers.
+
+### ⚠️ Compatibility Warnings
+
+- **standalone variants** require compatible system packages:
+  - runc or crun ≥ v1.1.11
+  - Latest conmon version
+  - Most Ubuntu versions have **outdated** runc/conmon that will fail
+- **default and full variants** include all required runtimes - work on **any** Linux distribution
 
 ## Building from Source
 
@@ -119,14 +154,20 @@ All builds run inside Ubuntu:rolling containers with:
 ### Containerized Build
 
 ```bash
-# Build podman-full for amd64 (runs inside container)
+# Build podman default variant for amd64 (runs inside container)
 make build-podman
 
-# Or manually trigger workflow
+# Or manually trigger workflow with specific variant
 gh workflow run build-podman.yml \
   -f version=v5.3.1 \
   -f architecture=amd64 \
-  -f variant=full
+  -f variant=default    # or standalone, or full
+
+# Build all variants for both architectures
+gh workflow run build-podman.yml \
+  -f version=v5.3.1 \
+  -f architecture=both \
+  -f variant=all
 ```
 
 ### Manual Build
@@ -140,8 +181,18 @@ podman run --rm -it \
 
 # Inside container:
 /workspace/scripts/container/setup-build-env.sh
+
+# Build default variant (recommended)
+/workspace/scripts/build-tool.sh podman amd64 default
+/workspace/scripts/package.sh podman v5.3.1 amd64 default
+
+# Or build full variant
 /workspace/scripts/build-tool.sh podman amd64 full
 /workspace/scripts/package.sh podman v5.3.1 amd64 full
+
+# Or build standalone variant (not recommended)
+/workspace/scripts/build-tool.sh podman amd64 standalone
+/workspace/scripts/package.sh podman v5.3.1 amd64 standalone
 ```
 
 ### Local Signing

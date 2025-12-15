@@ -1,27 +1,33 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.2.0 → 1.2.1
-Bump rationale: Adjust daily check schedule from UTC 00:00 to UTC 02:00 (PATCH)
+Version change: 1.2.1 → 1.3.0
+Bump rationale: Add third package variant (standalone/default/full) - MINOR
 
 Modified sections:
-  - Principle V (Automated Release Pipeline): Changed schedule from UTC 00:00 to UTC 02:00
-  - Release Pipeline > Version Detection: Changed schedule from UTC 00:00 to UTC 02:00
+  - Principle IV (Minimal Dependencies): Updated from 2 variants (full/minimal) to 3 variants (standalone/default/full)
+  - Build Artifacts: Updated naming convention and artifact table for 3 variants
+  - Added size information for all variants per tool
 
 Rationale:
-  - User preference for UTC 02:00 timing
-  - No functional changes to automation logic
-  - Maintains daily check requirement
+  - Standalone variant for users with compatible system runtimes (NOT RECOMMENDED)
+  - Default variant with minimum required runtime (RECOMMENDED) - uses simplified naming
+  - Full variant with complete rootless stack
+  - Improves user experience with clearer variant purposes
+  - Default variant gets simplified filename for ease of use
 
 Templates requiring updates:
   - .specify/templates/plan-template.md: ✅ No changes needed (generic template)
   - .specify/templates/spec-template.md: ✅ No changes needed (generic template)
   - .specify/templates/tasks-template.md: ✅ No changes needed (generic template)
 
-Follow-up TODOs: None
+Follow-up TODOs: Update tasks.md to use new variant terminology
 
 Previous changes:
 ==================
+Version 1.2.0 → 1.2.1 (PATCH)
+- Adjusted daily check schedule from UTC 00:00 to UTC 02:00
+
 Version 1.1.0 → 1.2.0 (MINOR)
 - Migration from Zig to Clang due to compatibility issues
 - Updated Principle III (Reproducible Builds): "documented minimum versions"
@@ -71,13 +77,24 @@ Build processes MUST be deterministic and reproducible.
 
 Include only components strictly necessary for functionality.
 
-- Podman full package: include required runtime components (crun, conmon, fuse-overlayfs, netavark, aardvark-dns, pasta, catatonit)
-- Podman minimal package: include only podman binary
-- Buildah and skopeo: include only the tool binary (no additional runtime needed)
+All tools provide three package variants:
+- **standalone**: Binary only (for users with existing compatible system runtimes)
+- **default**: Binary + minimum runtime components (crun, conmon) + configs (recommended for most users)
+- **full**: Binary + all companion tools (complete rootless stack)
+
+Specific variant contents:
+- Podman default: podman + crun + conmon + configs (~49MB)
+- Podman full: default + netavark + aardvark-dns + pasta + fuse-overlayfs + catatonit (~74MB)
+- Buildah default: buildah + crun + conmon + configs (~55MB)
+- Buildah full: default + fuse-overlayfs (~56MB)
+- Skopeo: all variants identical (~30MB, no runtime components needed)
+
+Principles:
 - No optional features or plugins unless explicitly justified
 - YAGNI: do not add components "just in case"
+- Default variant recommended for most users (includes minimum required runtime)
 
-**Rationale**: Minimal dependencies reduce attack surface, binary size, and maintenance burden.
+**Rationale**: Minimal dependencies reduce attack surface, binary size, and maintenance burden. Three variants provide flexibility while keeping defaults lean.
 
 ### V. Automated Release Pipeline
 
@@ -104,18 +121,24 @@ Version detection and releases MUST be fully automated.
 
 ### Build Artifacts
 
-For each tool release:
+For each tool release, three variants are provided:
 
 | Artifact | Description |
 |----------|-------------|
-| `{tool}-linux-amd64.tar.zst` | Binary tarball for amd64 (Zstandard compression) |
-| `{tool}-linux-arm64.tar.zst` | Binary tarball for arm64 (Zstandard compression) |
+| `{tool}-linux-{arch}.tar.zst` | Default variant (simplified name) - binary + crun + conmon + configs |
+| `{tool}-standalone-linux-{arch}.tar.zst` | Standalone variant - binary only |
+| `{tool}-full-linux-{arch}.tar.zst` | Full variant - complete rootless stack |
 | `checksums.txt` | SHA256 checksums for all tarballs |
-| `*.sig` or cosign signature | Sigstore/cosign signatures |
+| `*.bundle` | Cosign signature bundles (keyless OIDC) |
 
-Podman additionally provides:
-- `podman-full-linux-{arch}.tar.zst` - includes all runtime components
-- `podman-minimal-linux-{arch}.tar.zst` - podman binary only
+**Naming Convention**:
+- Default variant uses simplified filename for ease of use (e.g., `podman-linux-amd64.tar.zst`)
+- Other variants include variant name (e.g., `podman-full-linux-amd64.tar.zst`)
+
+**Per-tool Differences**:
+- Podman full: Adds netavark, aardvark-dns, pasta, fuse-overlayfs, catatonit
+- Buildah full: Adds fuse-overlayfs only
+- Skopeo: All variants identical (no runtime components needed)
 
 ### Build Environment
 
@@ -178,4 +201,4 @@ Upstream repos:
 - Upstream reference: https://github.com/mgoltzsche/podman-static
 - Container tools: https://github.com/containers
 
-**Version**: 1.2.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-13
+**Version**: 1.3.0 | **Ratified**: 2025-12-12 | **Last Amended**: 2025-12-15

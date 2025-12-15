@@ -6,13 +6,17 @@ Thank you for your interest in contributing! This document outlines the developm
 
 ### Prerequisites
 
-- **Go 1.21+** - For building container tools
-- **Zig 0.11+** - Cross-compiler for static linking with musl
-- **CMake 3.15+** - For building mimalloc
-- **Ninja** - Build system for mimalloc
+- **podman or docker** - For containerized builds
 - **Git** - Version control
-- **GitHub CLI (gh)** - For version checking and releases
-- **Make** - For convenient build commands
+- **GitHub CLI (gh)** - For version checking and releases (optional)
+- **Make** - For convenient build commands (optional)
+
+**Inside Container** (installed automatically):
+- Clang 18+ with musl support
+- Go 1.21+
+- Rust/Cargo + protobuf-compiler
+- CMake 3.15+ and Ninja - For building mimalloc
+- Build tools (autoconf, automake, meson, ninja)
 
 ### Installation
 
@@ -21,12 +25,15 @@ Thank you for your interest in contributing! This document outlines the developm
 git clone https://github.com/pigfoot/rootless-static-toolkits.git
 cd rootless-static-toolkits
 
-# Install Zig (if not already installed)
-# Download from https://ziglang.org/download/
-# Or use your package manager
+# Install podman (if not already installed)
+# Ubuntu/Debian:
+sudo apt-get install -y podman
 
-# Verify prerequisites
-make check-deps  # Will be implemented if not exists
+# Fedora/RHEL:
+sudo dnf install -y podman
+
+# Verify podman works in rootless mode
+podman info | grep -q "rootless: true" && echo "✓ Rootless podman ready"
 ```
 
 ## Project Structure
@@ -39,7 +46,7 @@ make check-deps  # Will be implemented if not exists
 │   ├── build-skopeo.yml    # Skopeo build workflow
 │   └── check-releases.yml  # Auto version detection
 ├── scripts/                # Build and utility scripts
-│   ├── build-tool.sh       # Main build script (Zig + Go)
+│   ├── build-tool.sh       # Main build script (Clang + Go)
 │   ├── build-mimalloc.sh   # Build mimalloc allocator
 │   ├── package.sh          # Create release tarballs
 │   ├── sign-release.sh     # Sign with cosign
@@ -67,8 +74,10 @@ make build-podman
 # Build for specific architecture
 make build-podman ARCH=arm64
 
-# Build specific variant (podman only)
-make build-podman VARIANT=minimal
+# Build specific variant
+make build-podman VARIANT=standalone  # Binary only
+make build-podman VARIANT=default     # Recommended (binary + crun + conmon)
+make build-podman VARIANT=full        # Complete stack
 ```
 
 #### Building All Tools
@@ -150,17 +159,19 @@ make test
 
 ### How Static Builds Work
 
-1. **mimalloc** is compiled first using Zig cross-compiler
+All builds run inside **Ubuntu:rolling containers** using podman for reproducibility.
+
+1. **mimalloc** is compiled first using Clang with musl target
 2. **Container tools** (podman/buildah/skopeo) are built with:
    - Go compiler with CGO enabled
-   - Zig as C/C++ compiler (`CC="zig cc -target x86_64-linux-musl"`)
+   - Clang as C/C++ compiler (`CC="clang --target=x86_64-linux-musl"`)
    - Static linking flags (`-ldflags "-linkmode external -extldflags '-static'"`)
    - mimalloc linked statically for better performance
 
-3. **Runtime components** (for podman-full):
-   - crun, conmon, fuse-overlayfs (C, built with Zig)
-   - netavark, aardvark-dns (Rust, cross-compiled)
-   - pasta, catatonit (C, built with Zig)
+3. **Runtime components** (for full variants):
+   - crun, conmon, fuse-overlayfs (C, built with Clang + musl)
+   - netavark, aardvark-dns (Rust, cross-compiled with musl target)
+   - pasta, catatonit (C, built with Clang + musl)
 
 ### Key Scripts
 
@@ -190,10 +201,10 @@ Trigger builds manually via GitHub Actions:
 
 ```bash
 # Using GitHub CLI
-gh workflow run build-podman.yml -f version=v5.3.1 -f variant=both
+gh workflow run build-podman.yml -f version=v5.3.1 -f variant=all -f architecture=both
 
 # Or via web UI
-# Actions → Build Podman → Run workflow → Enter version
+# Actions → Build Podman → Run workflow → Enter version, variant, architecture
 ```
 
 ### Release Process
@@ -236,31 +247,39 @@ build/podman-amd64/install/bin/podman run --rm alpine echo "test"
 
 ### Build Failures
 
-**CMake can't find Zig compiler:**
+**Container fails to start:**
 
-Ensure Zig is in PATH and version is 0.11+:
+Ensure podman is installed and running in rootless mode:
 
 ```bash
-which zig
-zig version
+podman info | grep rootless
+# Expected: rootless: true
 ```
 
 **mimalloc build fails:**
 
-Check that CMake and Ninja are installed:
+Check that build happens inside container (should auto-install dependencies):
 
 ```bash
-cmake --version  # 3.15+
-ninja --version
+# If building manually, verify CMake and Ninja inside container:
+podman run --rm docker.io/ubuntu:rolling bash -c "cmake --version && ninja --version"
 ```
 
 **Go build fails with CGO errors:**
 
-Verify environment variables:
+Verify environment variables inside container:
 
 ```bash
-echo $CC        # Should be: zig cc -target x86_64-linux-musl
+echo $CC        # Should be: clang --target=x86_64-linux-musl
 echo $CGO_ENABLED  # Should be: 1
+```
+
+**Volume mount permission denied:**
+
+Add `:z` flag for SELinux relabeling:
+
+```bash
+podman run -v ./build:/workspace/build:rw,z ...
 ```
 
 ### GitHub API Rate Limiting
@@ -277,9 +296,10 @@ gh auth login
 
 ### Local vs CI Differences
 
-- **CI uses Ubuntu 22.04** - Test locally on similar environment if issues occur
-- **CI uses GitHub-hosted runners** - No ARM64 native runners, uses QEMU or cross-compilation
-- **CI has OIDC token** - For cosign signing, can't be tested locally
+- **CI uses Ubuntu 22.04 runners** - Test locally with same `docker.io/ubuntu:rolling` container for consistency
+- **CI uses containerized builds** - All builds happen inside containers, reproducible locally
+- **CI uses cross-compilation for arm64** - Clang cross-compiles arm64 on amd64 runners
+- **CI has OIDC token** - For cosign signing, can't be tested locally (use `--bundle` for local signing)
 
 ## Contributing Guidelines
 
@@ -312,7 +332,7 @@ Follow [Conventional Commits](https://www.conventionalcommits.org/):
 ```
 feat: add arm64 support for buildah
 
-- Cross-compile with zig for aarch64-linux-musl
+- Cross-compile with Clang for aarch64-linux-musl
 - Update CI matrix to include arm64
 - Add smoke tests for arm64 binaries
 
