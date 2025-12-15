@@ -26,7 +26,7 @@ Build a fully automated release pipeline for static podman, buildah, and skopeo 
   - GitHub Actions runner limits
   - Container startup overhead (~1-2 minutes)
   - Upstream release frequency
-**Scale/Scope**: 3 tools × 2 architectures × 2 variants (podman) = ~10 artifacts per release cycle
+**Scale/Scope**: 3 tools × 3 variants × 2 architectures = 18 artifacts per release cycle
 
 ## Constitution Check
 
