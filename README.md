@@ -1,9 +1,9 @@
 # Rootless Static Toolkits
 
-[![Build Podman](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-podman.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-podman.yml)
-[![Build Buildah](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-buildah.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-buildah.yml)
-[![Build Skopeo](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-skopeo.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/build-skopeo.yml)
-[![Check New Releases](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/check-releases.yml/badge.svg)](https://github.com/pigfoot/rootless-static-toolkits/actions/workflows/check-releases.yml)
+[![Build Podman](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-podman.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-podman.yml)
+[![Build Buildah](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-buildah.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-buildah.yml)
+[![Build Skopeo](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-skopeo.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/build-skopeo.yml)
+[![Check New Releases](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/check-releases.yml/badge.svg)](https://github.com/pigfoot/static-rootless-container-tools/actions/workflows/check-releases.yml)
 
 Build truly static binaries for **podman**, **buildah**, and **skopeo** targeting `linux/amd64` and `linux/arm64`.
 
@@ -21,7 +21,7 @@ Build truly static binaries for **podman**, **buildah**, and **skopeo** targetin
 
 ```bash
 # Set repository and architecture
-REPO="pigfoot/rootless-static-toolkits"
+REPO="pigfoot/static-rootless-container-tools"
 ARCH=$([[ $(uname -m) == "aarch64" ]] && echo "arm64" || echo "amd64")
 
 # Download latest podman (default variant - recommended)
@@ -52,11 +52,11 @@ curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/${TOOL}-linux-${
 
 ### Download Specific Version
 
-Check [Releases](https://github.com/pigfoot/rootless-static-toolkits/releases) for all available versions.
+Check [Releases](https://github.com/pigfoot/static-rootless-container-tools/releases) for all available versions.
 
 ```bash
 # Example: Download podman default variant v5.7.1 for linux/amd64 (recommended)
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst
 
 # Extract
 zstd -d podman-linux-amd64.tar.zst && tar -xf podman-linux-amd64.tar
@@ -77,13 +77,13 @@ All releases include SHA256 checksums and cosign signatures (keyless OIDC).
 
 ```bash
 # Download checksums file
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/checksums.txt
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/checksums.txt
 
 # Verify SHA256 checksum
 sha256sum -c checksums.txt --ignore-missing
 
 # Verify cosign signature (requires cosign CLI)
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst.bundle
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.7.1/podman-linux-amd64.tar.zst.bundle
 cosign verify-blob \
   --bundle=podman-linux-amd64.tar.zst.bundle \
   --certificate-identity-regexp='https://github.com/.*' \

@@ -89,9 +89,9 @@ Download a release and verify:
 
 ```bash
 # Download artifacts
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst.sig
-curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/download/podman-v5.3.1/checksums.txt
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.3.1/podman-full-linux-amd64.tar.zst.sig
+curl -fsSL -O https://github.com/pigfoot/static-rootless-container-tools/releases/download/podman-v5.3.1/checksums.txt
 ```
 
 - [ ] Checksum verification passes:
@@ -104,7 +104,7 @@ curl -fsSL -O https://github.com/pigfoot/rootless-static-toolkits/releases/downl
   ```bash
   cosign verify-blob \
     --signature podman-full-linux-amd64.tar.zst.sig \
-    --certificate-identity-regexp="https://github.com/pigfoot/rootless-static-toolkits/.*" \
+    --certificate-identity-regexp="https://github.com/pigfoot/static-rootless-container-tools/.*" \
     --certificate-oidc-issuer=https://token.actions.githubusercontent.com \
     podman-full-linux-amd64.tar.zst
   # Output: Verified OK
@@ -258,7 +258,7 @@ If any check fails, refer to:
 
 ## Notes
 
-- Replace `pigfoot/rootless-static-toolkits` with actual repository before testing
+- Replace `pigfoot/static-rootless-container-tools` with actual repository before testing
 - Some tests require waiting for cron schedule
 - ARM64 builds may use QEMU on GitHub-hosted runners (slower)
 - Local validation can be done before GitHub push for most items

@@ -1,6 +1,6 @@
 # Quickstart: Static Container Tools
 
-> **Note**: Replace `pigfoot/rootless-static-toolkits` with your actual GitHub repository (e.g., `pigfoot/rootless-static-toolkits`)
+> **Note**: Replace `pigfoot/static-rootless-container-tools` with your actual GitHub repository (e.g., `pigfoot/static-rootless-container-tools`)
 
 ## For Users
 
@@ -10,7 +10,7 @@
 
    ```bash
    # Example: Download podman-full for amd64
-   REPO="pigfoot/rootless-static-toolkits"  # e.g., "pigfoot/rootless-static-toolkits"
+   REPO="pigfoot/static-rootless-container-tools"  # e.g., "pigfoot/static-rootless-container-tools"
    curl -LO "https://github.com/${REPO}/releases/latest/download/podman-full-linux-amd64.tar.zst"
    ```
 
@@ -88,9 +88,9 @@ skopeo copy docker://alpine:latest dir:./alpine-image
 ### Clone and Setup
 
 ```bash
-REPO="pigfoot/rootless-static-toolkits"  # e.g., "pigfoot/rootless-static-toolkits"
+REPO="pigfoot/static-rootless-container-tools"  # e.g., "pigfoot/static-rootless-container-tools"
 git clone "https://github.com/${REPO}.git"
-cd rootless-static-toolkits
+cd static-rootless-container-tools
 ```
 
 ### Build Locally (Containerized)
@@ -225,8 +225,8 @@ cosign version
 
 ## Links
 
-- [Releases](https://github.com/pigfoot/rootless-static-toolkits/releases) - Replace `pigfoot/rootless-static-toolkits` with your repository
-- [Source Code](https://github.com/pigfoot/rootless-static-toolkits)
+- [Releases](https://github.com/pigfoot/static-rootless-container-tools/releases) - Replace `pigfoot/static-rootless-container-tools` with your repository
+- [Source Code](https://github.com/pigfoot/static-rootless-container-tools)
 - [Upstream Podman](https://github.com/containers/podman)
 - [Upstream Buildah](https://github.com/containers/buildah)
 - [Upstream Skopeo](https://github.com/containers/skopeo)

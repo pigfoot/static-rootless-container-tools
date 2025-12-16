@@ -105,9 +105,9 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 **Current Build Status (as of 2025-12-15)**: All components successfully building ✅
 
 **Verified Builds**:
-- [Podman v5.7.1](https://github.com/pigfoot/rootless-static-toolkits/actions/runs/20227166202) - 6/6 builds passed
-- [Buildah v1.41.7](https://github.com/pigfoot/rootless-static-toolkits/actions/runs/20227166540) - 6/6 builds passed
-- [Skopeo v1.21.0](https://github.com/pigfoot/rootless-static-toolkits/actions/runs/20227166967) - 6/6 builds passed
+- [Podman v5.7.1](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166202) - 6/6 builds passed
+- [Buildah v1.41.7](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166540) - 6/6 builds passed
+- [Skopeo v1.21.0](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166967) - 6/6 builds passed
 
 #### Variant 1: standalone (Binary Only)
 

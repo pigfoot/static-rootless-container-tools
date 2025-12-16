@@ -34,7 +34,7 @@ UPSTREAM_REPO="containers/$TOOL"
 
 # Determine local repository (from environment or argument)
 if [[ -n "$REPO_OWNER" ]]; then
-  LOCAL_REPO="$REPO_OWNER/rootless-static-toolkits"
+  LOCAL_REPO="$REPO_OWNER/static-rootless-container-tools"
 elif [[ -n "${GITHUB_REPOSITORY:-}" ]]; then
   LOCAL_REPO="$GITHUB_REPOSITORY"
 else

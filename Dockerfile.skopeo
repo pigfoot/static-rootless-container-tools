@@ -65,4 +65,4 @@ CMD ["/bin/sh"]
 # Labels
 LABEL org.opencontainers.image.title="skopeo-builder" \
       org.opencontainers.image.description="Alpine-based build environment for static skopeo" \
-      org.opencontainers.image.source="https://github.com/YOUR_USERNAME/rootless-static-toolkits"
+      org.opencontainers.image.source="https://github.com/YOUR_USERNAME/static-rootless-container-tools"

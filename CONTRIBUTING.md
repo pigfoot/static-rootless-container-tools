@@ -22,8 +22,8 @@ Thank you for your interest in contributing! This document outlines the developm
 
 ```bash
 # Clone the repository
-git clone https://github.com/pigfoot/rootless-static-toolkits.git
-cd rootless-static-toolkits
+git clone https://github.com/pigfoot/static-rootless-container-tools.git
+cd static-rootless-container-tools
 
 # Install podman (if not already installed)
 # Ubuntu/Debian:
