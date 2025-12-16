@@ -298,13 +298,14 @@ podman-v5.3.1/
 |------------------|------------|---------------|--------|
 | Containerized builds via podman | Reproducibility, clean environment, runner independence | Direct runner execution (previous approach) | **NEW** - Recommended by user |
 | Ubuntu:rolling as build image | Latest stable packages, regular security updates | Pin to Ubuntu 24.04 LTS | **NEW** - User specified |
-| Clang + musl target | GCC compatibility, build system support | Alpine-based static build | **ACTIVE** - Verified working |
+| Clang + musl target with explicit CGO paths | **CRITICAL**: glibc NSS incompatible with static linking (causes SIGFPE in `podman build`); musl required for functional static binaries | musl-gcc wrapper (standard approach) | **ACTIVE** - Verified working |
 | mimalloc static link | musl allocator is slow | Accept musl allocator for CLI tools | **ACTIVE** |
 | Cross-compile arm64 on amd64 | Avoid ARM runner cost/complexity | Use ubuntu-24.04-arm native runner | **ACTIVE** |
 
 **Historical Note**:
 - Zig cross-compiler was initially considered but abandoned due to ecosystem compatibility issues. See [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md).
 - **2025-12-14 Update**: Migrated from runner-native builds to containerized builds for improved reproducibility and isolation.
+- **2025-12-15 Update**: Discovered glibc NSS (Name Service Switch) causes SIGFPE errors in statically linked binaries during user lookup operations (`getpwnam_r`). Migrated to explicit musl configuration. See detailed analysis in [MUSL_MIGRATION_REPORT.md](./MUSL_MIGRATION_REPORT.md).
 
 ## Migration from Runner-Native to Containerized Builds
 
@@ -331,6 +332,117 @@ podman-v5.3.1/
 - **None for end users**: Release artifacts remain identical (static binaries)
 - **CI/CD workflows**: Require modification to use podman containers
 - **Local builds**: Now require podman installed (or fallback to previous scripts)
+
+## Critical Technical Decision: musl vs glibc for Static Linking
+
+### Problem Discovery (2025-12-15)
+
+**Symptom**: `podman build` crashes with SIGFPE (floating-point exception) when using statically linked binary built without explicit musl configuration.
+
+```bash
+$ podman build -t test .
+error in copier subprocess: SIGFPE: floating-point exception
+```
+
+**Root Cause**: glibc's NSS (Name Service Switch) system is fundamentally incompatible with static linking:
+
+1. glibc NSS dynamically loads plugins at runtime (`libnss_files.so`, `libnss_dns.so`)
+2. Static binaries cannot load these shared libraries
+3. User lookup functions (`getpwnam_r`, `getpwuid_r`) fail during container builds
+4. Error handling code triggers SIGFPE (division by zero)
+
+**Build Warning (Initially Ignored)**:
+```
+warning: Using 'getpwnam_r' in statically linked applications requires
+at runtime the shared libraries from the glibc version used for linking
+```
+
+### Why musl Instead of glibc
+
+From industry research ([ref](https://eli.thegreenplace.net/2024/building-static-binaries-with-go-on-linux/)):
+> "The first solution that may come to mind is to just link the glibc statically. However, that rarely works, as various warnings will tell you. The glibc just doesn't like that."
+
+**musl libc advantages for static linking**:
+- No NSS dependencies (simpler user/group lookup implementation)
+- Designed for static linking from the ground up
+- Smaller binary size (~43MB vs potentially larger with glibc workarounds)
+- No runtime library requirements
+- No SIGFPE errors in user lookup operations
+
+### Implementation: Explicit musl Paths
+
+**Original approach (BROKEN - defaults to glibc)**:
+```bash
+export CC="clang"
+export CGO_ENABLED=1
+go build -ldflags "-linkmode external -extldflags '-static'"
+```
+
+**Fixed approach (WORKING - explicit musl)**:
+```bash
+export CC="clang"
+export CGO_ENABLED=1
+
+# Architecture-aware musl paths
+MUSL_ARCH="x86_64-linux-musl"  # or aarch64-linux-musl for arm64
+
+# Point clang to musl libraries instead of glibc
+export CGO_CFLAGS="-I/usr/include/${MUSL_ARCH} -w"
+export CGO_LDFLAGS="-L/usr/lib/${MUSL_ARCH} -static"
+```
+
+**Critical difference**: Without explicit paths, clang defaults to glibc headers/libraries even when `-static` is specified.
+
+### Alternative Approaches (Not Used)
+
+**Standard Industry Approach: musl-gcc wrapper**
+```bash
+CC=/usr/local/musl/bin/musl-gcc go build --ldflags '-linkmode external -extldflags "-static"'
+```
+
+**Why we use clang + explicit paths instead**:
+1. Already using clang from setup-build-env.sh
+2. No additional dependencies (musl-dev already provides libraries)
+3. Direct control over compiler flags
+4. Same result: statically linked musl binaries
+
+Both approaches are functionally equivalent - musl-gcc is just a wrapper that sets similar paths.
+
+### Verification
+
+**Binary Check**:
+```bash
+$ ldd build/podman-amd64/install/bin/podman
+not a dynamic executable
+
+$ strings podman | grep -i musl
+musl libc (x86_64)
+```
+
+**Functional Test**:
+```bash
+$ podman build -t test .
+STEP 1/6: FROM docker.io/node:lts-slim
+...
+Successfully tagged localhost/test:latest
+```
+
+✅ No SIGFPE errors with musl-linked binary
+
+### Impact on Build System
+
+| Aspect | Before (glibc default) | After (explicit musl) |
+|--------|----------------------|----------------------|
+| **C Library** | glibc | musl |
+| **Configuration Complexity** | Low (defaults) | Medium (explicit paths) |
+| **NSS Functions** | ❌ Fail (SIGFPE) | ✅ Work |
+| **podman build** | ❌ Crashes | ✅ Success |
+| **Binary Size** | ~43MB | ~43MB |
+| **Maintenance** | Simple but broken | Slightly complex but working |
+
+**Conclusion**: Explicit musl configuration is **mandatory** for functional static binaries. The additional complexity (CGO_CFLAGS/LDFLAGS) is necessary to avoid glibc's NSS incompatibility.
+
+**Reference**: See [MUSL_MIGRATION_REPORT.md](./MUSL_MIGRATION_REPORT.md) for complete technical analysis and research references.
 
 ## Next Steps (Phase 0: Research)
 

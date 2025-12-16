@@ -288,8 +288,9 @@ Each variant follows a different directory layout optimized for its use case:
 - GitHub Actions has sufficient runner time for multi-architecture builds
 - Sigstore/cosign keyless signing remains available and free for open source projects
 - Critical runtime components (libseccomp, libfuse) are built from source for reproducibility and compatibility (see [MIGRATION-ZIG-TO-CLANG.md](./MIGRATION-ZIG-TO-CLANG.md))
+- **musl libc must be used for static linking**: glibc's NSS (Name Service Switch) system is incompatible with static binaries, causing SIGFPE errors during `podman build` operations. Explicit musl paths (via CGO_CFLAGS/LDFLAGS) are mandatory. See [plan.md § Critical Technical Decision: musl vs glibc](./plan.md#critical-technical-decision-musl-vs-glibc-for-static-linking) for technical details.
 
-**Note on MIGRATION-ZIG-TO-CLANG.md**: This document should cover: (1) Zig compatibility issues encountered (pasta `__cpu_model` symbol, fuse-overlayfs meson detection failures), (2) Clang migration solution with musl target, (3) Build time impact analysis (+1-2 minutes for container setup), (4) Verification that all 8/8 components build successfully with Clang, (5) Containerization benefits (reproducibility, isolation)
+**Note on MIGRATION-ZIG-TO-CLANG.md**: This document covers: (1) Zig compatibility issues encountered (pasta `__cpu_model` symbol, fuse-overlayfs meson detection failures), (2) Clang migration solution with musl target, (3) Build time impact analysis (+1-2 minutes for container setup), (4) Verification that all 8/8 components build successfully with Clang, (5) Containerization benefits (reproducibility, isolation)
 
 ## Success Criteria *(mandatory)*
 
