@@ -4,7 +4,35 @@
 
 ## For Users
 
-### Download and Install
+### Choose Your Variant
+
+This project provides three package variants:
+
+| Variant | File Name | Use Case | Size |
+|---------|-----------|----------|------|
+| **standalone** | `{tool}-standalone-linux-{arch}.tar.zst` | Single binary only (for advanced users with existing runtimes) | ~44MB |
+| **default** ⭐ | `{tool}-linux-{arch}.tar.zst` | Binary + runtime (crun, conmon) + configs (recommended) | ~49MB |
+| **full** | `{tool}-full-linux-{arch}.tar.zst` | Complete rootless stack with all components | ~74MB |
+
+### Option A: Standalone Variant (Simplest)
+
+For advanced users who want just the binary:
+
+```bash
+REPO="pigfoot/static-rootless-container-tools"
+curl -LO "https://github.com/${REPO}/releases/latest/download/podman-standalone-linux-amd64.tar.zst"
+tar -xf podman-standalone-linux-amd64.tar.zst
+cd podman-v5.3.1
+./podman --version
+# Copy to your preferred location or use directly
+cp podman ~/.local/bin/  # or /usr/local/bin with sudo
+```
+
+**Note**: Requires compatible system runc/crun ≥ v1.1.11 (most distributions have older versions - use default variant instead).
+
+### Option B: Default/Full Variant (Recommended)
+
+For most users who want a complete package:
 
 1. **Download the latest release:**
 

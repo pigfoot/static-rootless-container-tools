@@ -287,8 +287,22 @@ jobs:
             - `default` (simple name) and `full` include all required runtimes - work on any Linux distribution
 
           **INSTALLATION**
+
+          **Option A: Standalone variant (single binary)**
           ```bash
-          # Download tarball for your architecture (default variant recommended)
+          # Download and extract
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ inputs.version }}/buildah-standalone-linux-amd64.tar.zst
+          tar -xf buildah-standalone-linux-amd64.tar.zst
+          cd buildah-${{ inputs.version }}
+
+          # Run directly or copy to your preferred location
+          ./buildah --version
+          cp buildah ~/.local/bin/  # or /usr/local/bin with sudo
+          ```
+
+          **Option B: Default/Full variant (recommended)**
+          ```bash
+          # Download tarball for your architecture
           curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ inputs.version }}/buildah-linux-amd64.tar.zst
 
           # Extract

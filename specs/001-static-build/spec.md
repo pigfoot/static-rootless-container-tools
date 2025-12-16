@@ -109,6 +109,54 @@ As a project maintainer, I want to manually trigger a build for a specific tool 
 - [Buildah v1.41.7](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166540) - 6/6 builds passed
 - [Skopeo v1.21.0](https://github.com/pigfoot/static-rootless-container-tools/actions/runs/20227166967) - 6/6 builds passed
 
+### Directory Structure by Variant
+
+Each variant follows a different directory layout optimized for its use case:
+
+#### standalone variant (root-level binary)
+```
+{tool}-standalone-linux-{arch}/
+└── {tool}          ← Single binary, no README needed
+```
+
+**Rationale**: Minimalist design for advanced users - just the binary, nothing else. Users run `./podman` directly after extraction or copy to their preferred location.
+
+#### default variant (FHS-style layout)
+```
+{tool}-linux-{arch}/
+├── usr/local/bin/
+│   ├── {tool}
+│   ├── crun
+│   └── conmon
+├── etc/containers/
+│   ├── policy.json
+│   ├── registries.conf
+│   └── storage.conf
+└── README.txt
+```
+
+**Rationale**: Multiple binaries + configs require organized structure. Follows Filesystem Hierarchy Standard for easy system-wide installation (`sudo cp -r usr/* /usr/ && sudo cp -r etc/* /etc/`).
+
+#### full variant (complete stack)
+```
+{tool}-full-linux-{arch}/
+├── usr/local/bin/
+│   ├── {tool}
+│   ├── crun
+│   ├── conmon
+│   ├── netavark       (podman/buildah only)
+│   ├── aardvark-dns   (podman only)
+│   ├── pasta          (podman only)
+│   ├── pasta.avx2     (podman only)
+│   ├── fuse-overlayfs
+│   └── catatonit      (podman only)
+├── etc/containers/
+│   └── ...
+└── README.txt
+```
+
+**Rationale**: Same as default variant but with additional runtime components for complete functionality.
+
 #### Variant 1: standalone (Binary Only)
 
 **Contents**:

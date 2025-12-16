@@ -285,8 +285,22 @@ jobs:
           **NOTE**: All skopeo variants are essentially the same (~30MB) since skopeo is a registry client tool that doesn't run containers. The default variant includes registry configuration files.
 
           **INSTALLATION**
+
+          **Option A: Standalone variant (single binary)**
           ```bash
-          # Download tarball for your architecture (default variant recommended)
+          # Download and extract
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-standalone-linux-amd64.tar.zst
+          tar -xf skopeo-standalone-linux-amd64.tar.zst
+          cd skopeo-${{ inputs.version }}
+
+          # Run directly or copy to your preferred location
+          ./skopeo --version
+          cp skopeo ~/.local/bin/  # or /usr/local/bin with sudo
+          ```
+
+          **Option B: Default/Full variant (recommended - includes registry configs)**
+          ```bash
+          # Download tarball for your architecture
           curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/skopeo-${{ inputs.version }}/skopeo-linux-amd64.tar.zst
 
           # Extract

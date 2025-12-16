@@ -151,58 +151,68 @@ if [[ ! -d "$INSTALL_DIR/bin" ]]; then
   exit 1
 fi
 
-# Create staging directory with FHS-compliant structure
+# Create staging directory
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/$PACKAGE_DIR"
 
-# Organize binaries by type (following mgoltzsche pattern)
-# usr/local/bin/ = user-facing tools
-# usr/local/lib/podman/ = runtime helpers
+# Organize binaries based on variant
 echo "Organizing binaries..."
-mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin"
-mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman"
 
-# Define which binaries go where
-BIN_TOOLS="podman crun fuse-overlayfs pasta pasta.avx2 buildah skopeo"
-LIB_HELPERS="conmon netavark aardvark-dns catatonit"
+if [[ "$VARIANT" == "standalone" ]]; then
+  # standalone variant: binary at root level only (no subdirectories, no README)
+  echo "  → $TOOL (root level)"
+  cp "$INSTALL_DIR/bin/$TOOL" "$STAGING_DIR/$PACKAGE_DIR/"
+else
+  # default/full variants: FHS-compliant structure
+  # usr/local/bin/ = user-facing tools
+  # usr/local/lib/podman/ = runtime helpers
+  mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin"
+  mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman"
 
-# Copy user-facing tools to bin/
-for binary in $BIN_TOOLS; do
-  if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
-    echo "  → usr/local/bin/$binary"
-    cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin/"
-  fi
-done
+  # Define which binaries go where
+  BIN_TOOLS="podman crun fuse-overlayfs pasta pasta.avx2 buildah skopeo"
+  LIB_HELPERS="conmon netavark aardvark-dns catatonit"
 
-# Copy runtime helpers to lib/podman/
-for binary in $LIB_HELPERS; do
-  if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
-    echo "  → usr/local/lib/podman/$binary"
-    cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
-  fi
-done
+  # Copy user-facing tools to bin/
+  for binary in $BIN_TOOLS; do
+    if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
+      echo "  → usr/local/bin/$binary"
+      cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/bin/"
+    fi
+  done
 
-# Also check lib/podman/ source directory (for rootlessport, etc.)
-if [[ -d "$INSTALL_DIR/lib/podman" ]]; then
-  for binary in "$INSTALL_DIR/lib/podman"/*; do
-    if [[ -f "$binary" ]]; then
-      binary_name=$(basename "$binary")
-      echo "  → usr/local/lib/podman/$binary_name"
-      cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
+  # Copy runtime helpers to lib/podman/
+  for binary in $LIB_HELPERS; do
+    if [[ -f "$INSTALL_DIR/bin/$binary" ]]; then
+      echo "  → usr/local/lib/podman/$binary"
+      cp "$INSTALL_DIR/bin/$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
     fi
   done
 fi
 
-# Also check libexec/podman/ source directory (for quadlet)
-if [[ -d "$INSTALL_DIR/libexec/podman" ]]; then
-  mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman"
-  for binary in "$INSTALL_DIR/libexec/podman"/*; do
-    if [[ -f "$binary" ]]; then
-      binary_name=$(basename "$binary")
-      echo "  → usr/local/libexec/podman/$binary_name"
-      cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman/"
-    fi
-  done
+# Also check lib/podman/ and libexec/podman/ source directories (only for default/full variants)
+if [[ "$VARIANT" != "standalone" ]]; then
+  if [[ -d "$INSTALL_DIR/lib/podman" ]]; then
+    for binary in "$INSTALL_DIR/lib/podman"/*; do
+      if [[ -f "$binary" ]]; then
+        binary_name=$(basename "$binary")
+        echo "  → usr/local/lib/podman/$binary_name"
+        cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/lib/podman/"
+      fi
+    done
+  fi
+
+  # Also check libexec/podman/ source directory (for quadlet)
+  if [[ -d "$INSTALL_DIR/libexec/podman" ]]; then
+    mkdir -p "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman"
+    for binary in "$INSTALL_DIR/libexec/podman"/*; do
+      if [[ -f "$binary" ]]; then
+        binary_name=$(basename "$binary")
+        echo "  → usr/local/libexec/podman/$binary_name"
+        cp "$binary" "$STAGING_DIR/$PACKAGE_DIR/usr/local/libexec/podman/"
+      fi
+    done
+  fi
 fi
 
 # Validate required components based on tool and variant
@@ -214,7 +224,7 @@ REQUIRED_COMPONENTS=()
 # Define required components based on tool and variant
 if [[ "$TOOL" == "podman" ]]; then
   if [[ "$VARIANT" == "standalone" ]]; then
-    REQUIRED_COMPONENTS=("usr/local/bin/podman")
+    REQUIRED_COMPONENTS=("podman")
   elif [[ "$VARIANT" == "default" ]]; then
     REQUIRED_COMPONENTS=(
       "usr/local/bin/podman"
@@ -235,7 +245,7 @@ if [[ "$TOOL" == "podman" ]]; then
   fi
 elif [[ "$TOOL" == "buildah" ]]; then
   if [[ "$VARIANT" == "standalone" ]]; then
-    REQUIRED_COMPONENTS=("usr/local/bin/buildah")
+    REQUIRED_COMPONENTS=("buildah")
   elif [[ "$VARIANT" == "default" ]]; then
     REQUIRED_COMPONENTS=(
       "usr/local/bin/buildah"
@@ -251,8 +261,12 @@ elif [[ "$TOOL" == "buildah" ]]; then
     )
   fi
 elif [[ "$TOOL" == "skopeo" ]]; then
-  # skopeo doesn't need runtime components (doesn't run containers)
-  REQUIRED_COMPONENTS=("usr/local/bin/skopeo")
+  if [[ "$VARIANT" == "standalone" ]]; then
+    REQUIRED_COMPONENTS=("skopeo")
+  else
+    # skopeo doesn't need runtime components (doesn't run containers)
+    REQUIRED_COMPONENTS=("usr/local/bin/skopeo")
+  fi
 fi
 
 MISSING_COMPONENTS=()
@@ -277,17 +291,19 @@ fi
 echo "✅ All required components present (${#REQUIRED_COMPONENTS[@]}/${#REQUIRED_COMPONENTS[@]})"
 echo ""
 
-# Copy etc/ directory with default configs
-echo "Copying configuration files to etc/containers/..."
-mkdir -p "$STAGING_DIR/$PACKAGE_DIR/etc/containers"
-cp "$PROJECT_ROOT/etc/containers/policy.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
-cp "$PROJECT_ROOT/etc/containers/registries.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
-cp "$PROJECT_ROOT/etc/containers/containers.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
-cp "$PROJECT_ROOT/etc/containers/storage.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
-cp "$PROJECT_ROOT/etc/containers/seccomp.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+# Copy etc/ directory with default configs (skip for standalone variant)
+if [[ "$VARIANT" != "standalone" ]]; then
+  echo "Copying configuration files to etc/containers/..."
+  mkdir -p "$STAGING_DIR/$PACKAGE_DIR/etc/containers"
+  cp "$PROJECT_ROOT/etc/containers/policy.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+  cp "$PROJECT_ROOT/etc/containers/registries.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+  cp "$PROJECT_ROOT/etc/containers/containers.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+  cp "$PROJECT_ROOT/etc/containers/storage.conf" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+  cp "$PROJECT_ROOT/etc/containers/seccomp.json" "$STAGING_DIR/$PACKAGE_DIR/etc/containers/"
+fi
 
-# Copy systemd files (for podman only)
-if [[ "$TOOL" == "podman" ]]; then
+# Copy systemd files (for podman only, skip for standalone variant)
+if [[ "$TOOL" == "podman" && "$VARIANT" != "standalone" ]]; then
   # Copy systemd service/socket files
   if [[ -d "$CONFIG_DIR/systemd" ]]; then
     echo "Copying systemd integration files..."
@@ -321,7 +337,8 @@ if [[ "$TOOL" == "podman" ]]; then
   fi
 fi
 
-# Create README for the package
+# Create README for the package (skip for standalone variant)
+if [[ "$VARIANT" != "standalone" ]]; then
 cat > "$STAGING_DIR/$PACKAGE_DIR/README.txt" <<EOF
 $TOOL $VERSION - Static Binary Release
 ======================================
@@ -411,6 +428,7 @@ fi
 
 echo "etc/containers/ (configuration):" >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
 ls -1 "$STAGING_DIR/$PACKAGE_DIR/etc/containers/" | sed 's/^/  /' >> "$STAGING_DIR/$PACKAGE_DIR/README.txt"
+fi  # End of README creation (skip for standalone variant)
 
 # Create tarball with zstd compression
 echo "Creating tarball..."

@@ -35,7 +35,7 @@
 - [X] T007 Implement scripts/container/setup-build-env.sh - Install clang, musl-dev, musl-tools, go, rust, protobuf-compiler inside Ubuntu container
 - [X] T008 [P] Implement scripts/container/run-build.sh - Wrapper to launch podman container with volume mounts and environment variables
 - [X] T009 Migrate scripts/build-tool.sh to containerized approach - Remove runner-native dependencies, add container-specific logic for mimalloc build, Go/Rust/C component builds with Clang + musl
-- [X] T010 [P] Migrate scripts/package.sh to run inside container - Create tarball structure with bin/, lib/, libexec/, etc/ directories from /workspace/build output, support standalone/default/full variants
+- [X] T010 [P] Migrate scripts/package.sh to run inside container - Create variant-specific tarball structures: standalone variant uses root-level binary only (no subdirs, no README), default/full variants use usr/local/bin/, usr/local/lib/podman/, etc/ directories from /workspace/build output
 - [X] T011 Implement libseccomp v2.5.5 source build in scripts/build-tool.sh for crun static linking
 - [X] T012 [P] Implement libfuse manual build in scripts/build-tool.sh with libfuse_config.h for fuse-overlayfs
 - [X] T013 Add Rust musl target support for netavark/aardvark-dns builds

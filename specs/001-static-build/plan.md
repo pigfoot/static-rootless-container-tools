@@ -225,31 +225,72 @@ cosign signature bundles (*.bundle)
 # Skopeo follows same pattern (all variants identical for skopeo)
 ```
 
-### Tarball Contents (podman-full example)
+### Tarball Contents by Variant
 
+Each variant follows a different directory layout optimized for its use case:
+
+#### standalone variant (podman example)
 ```
 podman-v5.3.1/
-├── bin/
+└── podman          ← Single binary at root level, no README
+```
+
+**Rationale**: Minimalist design for advanced users - just the binary, nothing else. Users run `./podman` directly or copy to their preferred location.
+
+#### default variant (podman example)
+```
+podman-v5.3.1/
+├── usr/local/bin/
 │   ├── podman
 │   ├── crun
-│   ├── conmon
+│   └── conmon
+├── usr/local/lib/podman/
+│   └── conmon
+├── etc/containers/
+│   ├── policy.json
+│   ├── registries.conf
+│   ├── storage.conf
+│   ├── containers.conf
+│   └── seccomp.json
+└── README.txt
+```
+
+**Rationale**: FHS-compliant structure for system-wide installation (`sudo cp -r usr/* /usr/`). Includes minimum runtime components.
+
+#### full variant (podman example)
+```
+podman-v5.3.1/
+├── usr/local/bin/
+│   ├── podman
+│   ├── crun
 │   ├── fuse-overlayfs
+│   ├── pasta
+│   └── pasta.avx2
+├── usr/local/lib/podman/
+│   ├── conmon
 │   ├── netavark
 │   ├── aardvark-dns
-│   ├── pasta
-│   └── catatonit
-├── lib/
-│   └── podman/
-│       ├── rootlessport
-│       └── (helper libraries if any)
-├── libexec/
-│   └── podman/
-│       └── quadlet
-└── etc/
-    └── containers/
-        ├── policy.json
-        └── registries.conf
+│   ├── catatonit
+│   └── rootlessport
+├── usr/local/libexec/podman/
+│   └── quadlet
+├── usr/local/lib/systemd/
+│   ├── system/          (service files)
+│   ├── user/            (service files)
+│   ├── system-generators/  (quadlet symlink)
+│   └── user-generators/    (quadlet symlink)
+├── etc/containers/
+│   ├── policy.json
+│   ├── registries.conf
+│   ├── storage.conf
+│   ├── containers.conf
+│   └── seccomp.json
+└── README.txt
 ```
+
+**Rationale**: Complete rootless stack with all components. Same FHS structure as default but with additional runtime components.
+
+**Note**: buildah follows the same pattern (skopeo variants differ only in binary name - no runtime components needed).
 
 ## Complexity Tracking
 
