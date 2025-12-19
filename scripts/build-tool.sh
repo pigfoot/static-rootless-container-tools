@@ -14,7 +14,7 @@ PROJECT_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 # Parse arguments
 TOOL="${1:-}"
-ARCH="${2:-amd64}"
+ARCH="${2:-$(uname -m | sed 's/aarch64/arm64/;s/x86_64/amd64/')}"
 VARIANT="${3:-}"
 LIBC="${4:-static}"
 
@@ -198,6 +198,11 @@ if [[ -z "${VERSION:-}" || "${VERSION}" == "latest" ]]; then
 else
   echo "Using specified version: $VERSION"
 fi
+
+# Save detected/specified version for downstream usage (package.sh, workflows)
+mkdir -p "$PROJECT_ROOT/build"
+echo "$VERSION" > "$PROJECT_ROOT/build/.detected-version"
+echo "Saved version to build/.detected-version: $VERSION"
 
 # Clone/update source with retry
 RETRY_COUNT=3
@@ -545,6 +550,84 @@ if [[ "$VARIANT" != "standalone" ]]; then
 
   echo "Components to build: ${COMPONENTS_TO_BUILD[*]:-none}"
   echo ""
+
+  # Build glib if conmon is needed (only conmon requires glib)
+  if [[ " ${COMPONENTS_TO_BUILD[*]} " =~ " conmon " ]] && [[ ! -f "/usr/local/lib/pkgconfig/glib-2.0.pc" ]]; then
+    echo "----------------------------------------"
+    echo "Building: glib (dependency for conmon)"
+    echo "----------------------------------------"
+
+    # Get latest stable glib tag from GitLab API
+    echo "  Detecting latest stable glib version..."
+    GLIB_TAG=$(curl -fsSL "https://gitlab.gnome.org/api/v4/projects/GNOME%2Fglib/repository/tags" 2>/dev/null | \
+      grep -oP '"name":"\K[0-9]+\.[0-9]*[02468]\.[0-9]+' | head -1)
+
+    if [[ -z "$GLIB_TAG" ]]; then
+      echo "  Warning: Could not detect latest version, using fallback: 2.86.3"
+      GLIB_TAG="2.86.3"
+    fi
+
+    echo "  Using glib version: $GLIB_TAG"
+
+    GLIB_SRC="$SRC_DIR/glib"
+    if [[ ! -d "$GLIB_SRC" ]]; then
+      echo "  Cloning glib..."
+      git clone --depth 1 --branch "$GLIB_TAG" https://gitlab.gnome.org/GNOME/glib.git "$GLIB_SRC" 2>&1 | tail -3 || {
+        echo "  Warning: Failed to clone tag $GLIB_TAG, trying latest stable branch..."
+        rm -rf "$GLIB_SRC"
+        GLIB_MINOR=$(echo "$GLIB_TAG" | grep -oP '^[0-9]+\.[0-9]+')
+        git clone --depth 1 --branch "glib-${GLIB_MINOR//./-}" https://gitlab.gnome.org/GNOME/glib.git "$GLIB_SRC" 2>&1 | tail -3 || {
+          echo "⚠ Warning: Failed to clone glib, conmon build may fail"
+        }
+      }
+    fi
+
+    if [[ -d "$GLIB_SRC" ]]; then
+      cd "$GLIB_SRC"
+      rm -rf build 2>/dev/null || true
+
+      # Ensure meson can find system dependencies via pkg-config
+      export PKG_CONFIG_PATH="/usr/lib/pkgconfig:/usr/lib/x86_64-linux-gnu/pkgconfig:/usr/share/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+
+      echo "  Configuring glib (minimal build, no introspection/docs)..."
+      /root/.local/bin/uv tool run meson setup build \
+        --prefix=/usr/local \
+        --buildtype=release \
+        --default-library=static \
+        -Dintrospection=disabled \
+        -Ddocumentation=false \
+        -Dselinux=disabled \
+        -Dlibmount=disabled \
+        -Dtests=false \
+        -Dglib_debug=disabled \
+        -Dglib_assert=false \
+        -Dglib_checks=false || {
+        echo "⚠ Warning: meson configure failed for glib"
+      }
+
+      echo "  Building glib..."
+      /root/.local/bin/uv tool run ninja -C build || {
+        echo "⚠ Warning: ninja build failed for glib"
+      }
+
+      echo "  Installing glib to /usr/local..."
+      /root/.local/bin/uv tool run ninja -C build install || {
+        echo "⚠ Warning: ninja install failed for glib"
+      }
+
+      # Ensure pkg-config can find glib
+      export PKG_CONFIG_PATH="/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig${PKG_CONFIG_PATH:+:${PKG_CONFIG_PATH}}"
+
+      if pkg-config --exists glib-2.0 2>/dev/null; then
+        echo "  ✓ glib built successfully: $(pkg-config --modversion glib-2.0)"
+      else
+        echo "⚠ Warning: glib pkg-config not found, conmon may fail"
+      fi
+
+      # Return to original directory
+      cd "$SRC_DIR/$TOOL"
+    fi
+  fi
 
   # Note: libseccomp may already be built if TOOL is podman/buildah
   # If not (e.g., TOOL=skopeo but building crun), build it now for crun
@@ -1065,13 +1148,18 @@ if [[ "$VARIANT" != "standalone" ]]; then
       crun)
         # crun: autotools with specific flags to disable systemd
         echo "Building crun (autotools, --disable-systemd, with mimalloc)..."
+
+        # Ensure Python is available for configure script (installed via uv)
+        export PATH="/root/.local/bin:$PATH"
+
         ./autogen.sh || {
           echo "⚠ Warning: autogen.sh failed for crun"
           continue
         }
 
         # Configure with mimalloc (same for both variants)
-        ./configure --disable-systemd --enable-embedded-yajl \
+        # Use uv run python to ensure Python is found by configure
+        PYTHON="/root/.local/bin/uv run python" ./configure --disable-systemd --enable-embedded-yajl \
           CFLAGS="-I$MIMALLOC_DIR/include" \
           LDFLAGS="$LDFLAGS -L$MIMALLOC_LIB_DIR -Wl,--whole-archive -l:libmimalloc.a -Wl,--no-whole-archive -lpthread" || {
           echo "⚠ Warning: configure failed for crun"

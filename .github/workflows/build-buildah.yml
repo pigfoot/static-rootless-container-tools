@@ -58,6 +58,12 @@ jobs:
           # Semver pattern: v1.2.3 or v1.2 or 1.2.3 or 1.2
           SEMVER_PATTERN='^v?[0-9]+\.[0-9]+(\.[0-9]+)?$'
 
+          # Skip validation if version is empty (will use latest)
+          if [[ -z "$VERSION" ]]; then
+            echo "✓ No version specified, will use latest from GitHub"
+            exit 0
+          fi
+
           if [[ ! "$VERSION" =~ $SEMVER_PATTERN ]]; then
             echo "Error: Invalid version format '$VERSION'"
             echo "Expected format: v1.2.3 or v1.2 or 1.2.3 or 1.2"
@@ -70,6 +76,8 @@ jobs:
     name: Build buildah-${{ matrix.libc }}-${{ matrix.variant }}-${{ matrix.arch }}
     needs: validate
     runs-on: ${{ matrix.runner }}
+    outputs:
+      version: ${{ steps.version.outputs.version }}
     strategy:
       matrix:
         arch: [amd64, arm64]
@@ -86,20 +94,114 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v6
 
-      - name: Install podman
+      - name: Install podman (pigfoot-static-default)
         run: |
-          sudo apt-get update
-          sudo apt-get install -y podman
+          sudo apt-get update && sudo apt-get install -y passt jq zstd
+
+          REPO="pigfoot/static-rootless-container-tools"
+          TAG=$(curl -s "https://api.github.com/repos/${REPO}/releases" | \
+            jq -r '[.[] | select(.tag_name | startswith("podman-"))][0].tag_name')
+
+          # Skip if no release exists (first-time bootstrap build)
+          if [[ -z "$TAG" || "$TAG" == "null" ]]; then
+            echo "⚠ No podman release found - this is a bootstrap build"
+            echo "Will use system docker for container runtime (via run-build.sh fallback)"
+            exit 0
+          fi
+
+          echo "Installing podman from release: $TAG"
+          cd /tmp
+          curl -fsSL "https://github.com/${REPO}/releases/download/${TAG}/podman-${TAG#podman-}-linux-${{ matrix.arch }}-static.tar.zst" | zstd -d | tar xf -
+          cd podman-${TAG#podman-}
+
+          sudo cp -f usr/local/bin/* /usr/bin/
+          sudo cp -a usr/local/lib/* /usr/lib/ 2>/dev/null || true
+          sudo cp -a usr/local/libexec/* /usr/libexec/ 2>/dev/null || true
+          sudo mkdir -p /etc/containers && sudo cp -a etc/containers/* /etc/containers/
+
+          echo "✓ Installed: $(podman --version)"
+
+      - name: Detect toolchain versions
+        id: detect-versions
+        run: |
+          # Detect latest LLVM version
+          LLVM_VERSION=$(curl -fsSL https://api.github.com/repos/llvm/llvm-project/releases/latest | jq -r '.tag_name' | sed 's/llvmorg-//')
+          echo "llvm-version=${LLVM_VERSION}" >> $GITHUB_OUTPUT
+
+          # Detect latest Go version
+          GO_VERSION=$(curl -fsSL https://go.dev/VERSION?m=text | head -1 | sed 's/go//')
+          echo "go-version=${GO_VERSION}" >> $GITHUB_OUTPUT
+
+          echo "Detected LLVM: ${LLVM_VERSION}, Go: ${GO_VERSION}"
+
+      - name: Cache toolchains
+        id: cache-toolchains
+        uses: actions/cache@v5
+        with:
+          path: |
+            ~/.cache/static-build-tools/llvm-${{ matrix.arch }}
+            ~/.cache/static-build-tools/go-${{ matrix.arch }}
+          key: toolchain-${{ matrix.arch }}-llvm${{ steps.detect-versions.outputs.llvm-version }}-go${{ steps.detect-versions.outputs.go-version }}
+          restore-keys: |
+            toolchain-${{ matrix.arch }}-
+
+      - name: Download LLVM (cache miss)
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        env:
+          LLVM_VERSION: ${{ steps.detect-versions.outputs.llvm-version }}
+        run: |
+          CACHE_DIR="$HOME/.cache/static-build-tools"
+          mkdir -p "$CACHE_DIR/llvm-${{ matrix.arch }}"
+
+          # Detect LLVM arch
+          if [[ "${{ matrix.arch }}" == "amd64" ]]; then LLVM_ARCH="X64"; else LLVM_ARCH="ARM64"; fi
+
+          LLVM_TAG="llvmorg-${LLVM_VERSION}"
+          LLVM_URL="https://github.com/llvm/llvm-project/releases/download/${LLVM_TAG}/LLVM-${LLVM_VERSION}-Linux-${LLVM_ARCH}.tar.xz"
+          echo "Downloading LLVM ${LLVM_VERSION}..."
+
+          curl -fsSL "$LLVM_URL" -o /tmp/llvm.tar.xz
+          tar -xf /tmp/llvm.tar.xz -C "$CACHE_DIR/llvm-${{ matrix.arch }}" --strip-components=1
+          rm /tmp/llvm.tar.xz
+          echo "${LLVM_VERSION}" > "$CACHE_DIR/llvm-${{ matrix.arch }}/.version"
+          echo "LLVM ${LLVM_VERSION} cached at: $CACHE_DIR/llvm-${{ matrix.arch }}"
+
+      - name: Download Go (cache miss)
+        if: steps.cache-toolchains.outputs.cache-hit != 'true'
+        env:
+          GO_VERSION: ${{ steps.detect-versions.outputs.go-version }}
+        run: |
+          CACHE_DIR="$HOME/.cache/static-build-tools"
+          mkdir -p "$CACHE_DIR/go-${{ matrix.arch }}"
+
+          echo "Downloading Go ${GO_VERSION}..."
+          curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${{ matrix.arch }}.tar.gz" -o /tmp/go.tar.gz
+          tar -xzf /tmp/go.tar.gz -C "$CACHE_DIR/go-${{ matrix.arch }}" --strip-components=1
+          rm /tmp/go.tar.gz
+          echo "${GO_VERSION}" > "$CACHE_DIR/go-${{ matrix.arch }}/.version"
+          echo "Go ${GO_VERSION} cached at: $CACHE_DIR/go-${{ matrix.arch }}"
 
       - name: Pull container image
-        run: podman pull docker.io/ubuntu:latest
+        run: |
+          # Detect container runtime (podman or docker)
+          if command -v podman >/dev/null 2>&1; then
+            CONTAINER_RUNTIME="podman"
+          elif command -v docker >/dev/null 2>&1; then
+            CONTAINER_RUNTIME="docker"
+            echo "⚠ Using docker as container runtime (bootstrap build)"
+          else
+            echo "Error: Neither podman nor docker is installed"
+            exit 1
+          fi
+
+          $CONTAINER_RUNTIME pull docker.io/ubuntu:latest
 
       - name: Create build directory
         run: mkdir -p build
 
       - name: Run build and package in container
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
           TOOL: buildah
           ARCH: ${{ matrix.arch }}
           VARIANT: ${{ matrix.variant }}
@@ -110,7 +212,36 @@ jobs:
           BUILD_START=$(date +%s)
           echo "Build started at: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
 
-          podman run --rm \
+          CACHE_DIR="$HOME/.cache/static-build-tools"
+          CACHE_MOUNTS=""
+          USE_CACHED_LLVM=0
+          USE_CACHED_GO=0
+
+          if [[ -x "$CACHE_DIR/llvm-$ARCH/bin/clang" ]]; then
+            echo "Using cached LLVM"
+            CACHE_MOUNTS="$CACHE_MOUNTS -v $CACHE_DIR/llvm-$ARCH:/usr/local/llvm:ro,z"
+            USE_CACHED_LLVM=1
+          fi
+
+          if [[ -x "$CACHE_DIR/go-$ARCH/bin/go" ]]; then
+            echo "Using cached Go"
+            CACHE_MOUNTS="$CACHE_MOUNTS -v $CACHE_DIR/go-$ARCH:/usr/local/go:ro,z"
+            USE_CACHED_GO=1
+          fi
+
+          # Detect container runtime (podman or docker)
+          if command -v podman >/dev/null 2>&1; then
+            CONTAINER_RUNTIME="podman"
+          elif command -v docker >/dev/null 2>&1; then
+            CONTAINER_RUNTIME="docker"
+            echo "⚠ Using docker as container runtime (bootstrap build)"
+          else
+            echo "Error: Neither podman nor docker is installed"
+            exit 1
+          fi
+
+          $CONTAINER_RUNTIME run --rm \
+            $CACHE_MOUNTS \
             -v ./scripts:/workspace/scripts:ro,z \
             -v ./build:/workspace/build:rw,z \
             -e VERSION=$VERSION \
@@ -119,12 +250,22 @@ jobs:
             -e VARIANT=$VARIANT \
             -e LIBC=$LIBC \
             -e GITHUB_TOKEN=$GITHUB_TOKEN \
+            -e USE_CACHED_LLVM=$USE_CACHED_LLVM \
+            -e USE_CACHED_GO=$USE_CACHED_GO \
             docker.io/ubuntu:latest \
-            bash -c "
+            bash -c '
               source /workspace/scripts/container/setup-build-env.sh && \
-              /workspace/scripts/build-tool.sh $TOOL $ARCH $VARIANT $LIBC && \
-              /workspace/scripts/package.sh $TOOL $ARCH $LIBC $VARIANT $VERSION
-            "
+              /workspace/scripts/build-tool.sh '"$TOOL $ARCH $VARIANT $LIBC"' && \
+              DETECTED_VERSION=$(cat /workspace/build/.detected-version) && \
+              /workspace/scripts/package.sh '"$TOOL $ARCH $LIBC $VARIANT"' "$DETECTED_VERSION" && \
+              echo "CLANG_VERSION=$(clang --version | head -n1 | awk '\''{print $3}'\'')" >> /workspace/build/tool-versions.env && \
+              echo "GO_VERSION=$(go version | awk '\''{print $3}'\'' | sed '\''s/go//'\'')" >> /workspace/build/tool-versions.env && \
+              echo "RUST_VERSION=$(rustc --version | awk '\''{print $2}'\'')" >> /workspace/build/tool-versions.env && \
+              echo "CMAKE_VERSION=$(/usr/local/cmake/bin/cmake --version | head -n1 | awk '\''{print $3}'\'')" >> /workspace/build/tool-versions.env && \
+              echo "NINJA_VERSION=$(/root/.local/bin/uv tool run ninja --version)" >> /workspace/build/tool-versions.env && \
+              echo "PYTHON_VERSION=$(/root/.local/bin/uv run python --version | awk '\''{print $2}'\'')" >> /workspace/build/tool-versions.env && \
+              echo "GLIB_VERSION=$(PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig pkg-config --modversion glib-2.0 2>/dev/null || echo N/A)" >> /workspace/build/tool-versions.env
+            '
 
           # Calculate and validate build duration
           BUILD_END=$(date +%s)
@@ -268,15 +409,28 @@ jobs:
           VARIANT: ${{ matrix.variant }}
           ARCH: ${{ matrix.arch }}
           LIBC: ${{ matrix.libc }}
-          VERSION: ${{ inputs.version }}
         run: |
+          # Read the actual version used by build-tool.sh
+          DETECTED_VERSION=$(cat build/.detected-version 2>/dev/null || echo "")
+          if [[ -z "$DETECTED_VERSION" ]]; then
+            echo "Error: Could not read detected version from build/.detected-version"
+            exit 1
+          fi
+
           # Tarball naming matches package.sh: {tool}-{version}-linux-{arch}-{libc}[-{variant}].tar.zst
           if [[ "$VARIANT" == "default" ]]; then
-            TARBALL_NAME="buildah-${VERSION}-linux-${ARCH}-${LIBC}.tar.zst"
+            TARBALL_NAME="buildah-${DETECTED_VERSION}-linux-${ARCH}-${LIBC}.tar.zst"
           else
-            TARBALL_NAME="buildah-${VERSION}-linux-${ARCH}-${LIBC}-${VARIANT}.tar.zst"
+            TARBALL_NAME="buildah-${DETECTED_VERSION}-linux-${ARCH}-${LIBC}-${VARIANT}.tar.zst"
           fi
           echo "name=$TARBALL_NAME" >> $GITHUB_OUTPUT
+
+      - name: Export version for release job
+        id: version
+        run: |
+          DETECTED_VERSION=$(cat build/.detected-version)
+          echo "version=$DETECTED_VERSION" >> $GITHUB_OUTPUT
+          echo "Exporting version for release job: $DETECTED_VERSION"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v5
@@ -318,12 +472,26 @@ jobs:
       - name: Create Release
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           TAG="buildah-${VERSION}"
 
+          # Load tool versions from build
+          if [[ -f build/tool-versions.env ]]; then
+            source build/tool-versions.env
+          else
+            # Fallback versions if file not found
+            CLANG_VERSION="21.1.x"
+            GO_VERSION="1.25.x"
+            RUST_VERSION="1.92.x"
+            CMAKE_VERSION="4.2.x"
+            NINJA_VERSION="1.13.x"
+            PYTHON_VERSION="3.14.x"
+            GLIB_VERSION="N/A"
+          fi
+
           # Create release notes
-          cat > /tmp/release-notes.md <<'NOTES'
+          cat > /tmp/release-notes.md <<NOTES
           Static and glibc-dynamic binaries for buildah built with Clang + mimalloc (containerized build)
 
           **ARCHITECTURES**
@@ -348,9 +516,9 @@ jobs:
           **Option A: Standalone variant (single binary)**
           ```bash
           # Download and extract (static variant recommended)
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ inputs.version }}/buildah-${{ inputs.version }}-linux-amd64-static-standalone.tar.zst
-          tar -xf buildah-${{ inputs.version }}-linux-amd64-static-standalone.tar.zst
-          cd buildah-${{ inputs.version }}
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ needs.build.outputs.version }}/buildah-${{ needs.build.outputs.version }}-linux-amd64-static-standalone.tar.zst
+          tar -xf buildah-${{ needs.build.outputs.version }}-linux-amd64-static-standalone.tar.zst
+          cd buildah-${{ needs.build.outputs.version }}
 
           # Run directly or copy to your preferred location
           ./buildah --version
@@ -360,11 +528,11 @@ jobs:
           **Option B: Default/Full variant (recommended)**
           ```bash
           # Download tarball for your architecture (static variant recommended)
-          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ inputs.version }}/buildah-${{ inputs.version }}-linux-amd64-static.tar.zst
+          curl -fsSL -O https://github.com/${{ github.repository }}/releases/download/buildah-${{ needs.build.outputs.version }}/buildah-${{ needs.build.outputs.version }}-linux-amd64-static.tar.zst
 
           # Extract
-          tar -xf buildah-${{ inputs.version }}-linux-amd64-static.tar.zst
-          cd buildah-${{ inputs.version }}
+          tar -xf buildah-${{ needs.build.outputs.version }}-linux-amd64-static.tar.zst
+          cd buildah-${{ needs.build.outputs.version }}
 
           # Install system-wide
           sudo cp -r usr/* /usr/
@@ -398,10 +566,18 @@ jobs:
           ```
 
           **BUILD DETAILS**
-            - Built inside docker.io/ubuntu:latest container using podman
-            - Compiler: Clang with musl target + mimalloc allocator
-            - Workflow ${{ github.workflow }}
-            - Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          - Built inside docker.io/ubuntu:latest container using podman
+          - Compiler: Clang (static: musl target, glibc: default target) + mimalloc allocator
+          - Build tools:
+            - Clang: ${CLANG_VERSION}
+            - Go: ${GO_VERSION}
+            - Rust: ${RUST_VERSION}
+            - CMake: ${CMAKE_VERSION}
+            - Ninja: ${NINJA_VERSION}
+            - Python: ${PYTHON_VERSION} (via uv)
+            - glib: ${GLIB_VERSION} (only for default/full variants)
+          - Workflow ${{ github.workflow }}
+          - Run ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           NOTES
 
           # Create or update release
@@ -418,7 +594,7 @@ jobs:
 
       - name: Release Summary
         env:
-          VERSION: ${{ inputs.version }}
+          VERSION: ${{ needs.build.outputs.version }}
         run: |
           echo "### 🚀 Release Complete" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
