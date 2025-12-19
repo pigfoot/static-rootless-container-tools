@@ -36,7 +36,18 @@ fi
 if [[ ! -f "$MIMALLOC_DIR/CMakeLists.txt" ]]; then
   echo "Cloning mimalloc..."
   mkdir -p "$(dirname "$MIMALLOC_DIR")"
-  git clone --depth 1 --branch v2.1.7 https://github.com/microsoft/mimalloc.git "$MIMALLOC_DIR"
+
+  # Auto-detect latest mimalloc version (skip non-version tags like "win-m4")
+  MIMALLOC_VERSION=$(curl -fsSL https://api.github.com/repos/microsoft/mimalloc/tags | \
+    grep -oP '"name": "\Kv[0-9]+\.[0-9]+\.[0-9]+"' | head -1 | tr -d '"')
+
+  if [[ -z "$MIMALLOC_VERSION" ]]; then
+    echo "Error: Could not detect latest mimalloc version" >&2
+    exit 1
+  fi
+  echo "  Detected latest mimalloc version: $MIMALLOC_VERSION"
+
+  git clone --depth 1 --branch "$MIMALLOC_VERSION" https://github.com/microsoft/mimalloc.git "$MIMALLOC_DIR"
 fi
 
 # Create build directory

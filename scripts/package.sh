@@ -463,7 +463,7 @@ cd "$STAGING_DIR"
 # Create tarball in build directory (for container volume mount)
 OUTPUT_TARBALL="$PROJECT_ROOT/build/${TARBALL_NAME}.tar.zst"
 mkdir -p "$PROJECT_ROOT/build"
-tar -cf - "$PACKAGE_DIR" | zstd -19 -T0 -o "$OUTPUT_TARBALL"
+tar -cf - "$PACKAGE_DIR" | zstd -19 -T0 -f -o "$OUTPUT_TARBALL"
 
 # Show results
 echo "========================================"
